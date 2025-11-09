@@ -1,0 +1,60 @@
+test.txt
+rotation_win_prob.csv
+clean_data.csv
+
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# virtualenvs
+venv/
+env/
+.venv/
+.env/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Jupyter (if you ever use it)
+.ipynb_checkpoints/
+
+# ---- Streamlit ----
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# ---- IDEs / editors ----
+# VS Code
+.vscode/
+
+# PyCharm / IntelliJ
+.idea/
+*.iml
+
+# ---- OS-specific ----
+# macOS
+.DS_Store
+.AppleDouble
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# ---- Logs / misc ----
+*.log
+
+
+# ---- Data
+data/
