@@ -6,7 +6,7 @@ import pandas as pd
 # ------------------------------------------------------------
 PAGE_ROTATION = "rotation_simulator"
 PAGE_WIP = "work in progress"
-PARAMS_FILE = "./params_out_2.csv"
+PARAMS_FILE = "./params_out_break_sideout.csv"
 
 POSITIONS = range(1, 7)
 SLIDER_MIN = -2.0
@@ -28,8 +28,9 @@ def get_team_params(df_all: pd.DataFrame) -> pd.DataFrame:
     return df_all[df_all["par_type"] == "team"].copy()
 
 
-def get_global_serve_default(df_all: pd.DataFrame) -> float:
-    m = (df_all["par_type"] == "global") & (df_all["par_name"] == "global_serve")
+def get_global_breakpoint_default(df_all: pd.DataFrame) -> float:
+    # in the file it's called global_breakpoint
+    m = (df_all["par_type"] == "global") & (df_all["par_name"] == "global_breakpoint")
     subset = df_all[m]
     if len(subset):
         return float(subset.iloc[0]["par_value"])
@@ -59,18 +60,20 @@ def reset_team_sliders(prefix: str):
     for pos in POSITIONS:
         st.session_state[f"{prefix}_pos{pos}_bp_adjustment"] = 0.0
         st.session_state[f"{prefix}_pos{pos}_so_adjustment"] = 0.0
-    # we won't set current_team_id/name here, we do it in the caller
 
 
 def apply_team_preset_if_changed(
-        prefix: str,
-        selected_team_id: str | None,
-        team_params_df: pd.DataFrame,
+    prefix: str,
+    selected_team_id: str | None,
+    team_params_df: pd.DataFrame,
 ):
+    """
+    When user selects a team from the dropdown, load all its parameters
+    from the CSV into the sliders.
+    """
     prev_key = f"{prefix}_selected_team_id_prev"
     prev_val = st.session_state.get(prev_key)
 
-    # if it's empty/Reset, caller will handle
     if not selected_team_id or selected_team_id == "Reset":
         st.session_state[prev_key] = selected_team_id
         return
@@ -81,14 +84,17 @@ def apply_team_preset_if_changed(
             par_name = row["par_name"]
             par_value = float(row["par_value"])
 
-            if par_name == "serve_team_adjustment":
+            # team level
+            if par_name == "breakpoint_team_adjustment":
                 st.session_state[f"{prefix}_bp_adjustment"] = par_value
-            elif par_name.startswith("serve_pos_"):
+            elif par_name == "sideout_team_adjustment":
+                st.session_state[f"{prefix}_so_adjustment"] = par_value
+
+            # rotation level
+            elif par_name.startswith("breakpoint_pos_"):
                 pos = par_name.split("_")[-1]
                 st.session_state[f"{prefix}_pos{pos}_bp_adjustment"] = par_value
-            elif par_name == "receive_team_adjustment":
-                st.session_state[f"{prefix}_so_adjustment"] = par_value
-            elif par_name.startswith("receive_pos_"):
+            elif par_name.startswith("sideout_pos_"):
                 pos = par_name.split("_")[-1]
                 st.session_state[f"{prefix}_pos{pos}_so_adjustment"] = par_value
 
@@ -96,9 +102,9 @@ def apply_team_preset_if_changed(
 
 
 def render_team_block_sidebar(
-        team_prefix: str,
-        team_name: str,
-        team_params_df: pd.DataFrame,
+    team_prefix: str,
+    team_name: str,
+    team_params_df: pd.DataFrame,
 ):
     st.sidebar.markdown(f"### {team_name}")
 
@@ -121,10 +127,8 @@ def render_team_block_sidebar(
     prev_sel = st.session_state.get(f"{team_prefix}_selected_team_id_prev")
 
     if selected_option == "Reset":
-        # only do the zeroing when user ACTUALLY switched to Reset now
         if prev_sel != "Reset":
             reset_team_sliders(team_prefix)
-        # treat Reset as a fake team we can still tweak
         st.session_state[f"{team_prefix}_current_team_id"] = "Reset"
         st.session_state[f"{team_prefix}_current_team_name"] = "Reset"
         st.session_state[f"{team_prefix}_selected_team_id_prev"] = "Reset"
@@ -138,10 +142,10 @@ def render_team_block_sidebar(
 
     sb_left, sb_right = st.sidebar.columns(2)
 
-    # BP
+    # BP (breakpoint)
     sb_left.markdown("**BP adjustments**")
     slider_sidebar(
-        f"{team_name} BP (global)",
+        f"{team_name} BP (team)",
         key=f"{team_prefix}_bp_adjustment",
         component=sb_left,
     )
@@ -152,10 +156,10 @@ def render_team_block_sidebar(
             component=sb_left,
         )
 
-    # SO
+    # SO (sideout)
     sb_right.markdown("**SO adjustments**")
     slider_sidebar(
-        f"{team_name} SO (global)",
+        f"{team_name} SO (team)",
         key=f"{team_prefix}_so_adjustment",
         component=sb_right,
     )
@@ -167,19 +171,21 @@ def render_team_block_sidebar(
         )
 
 
-def rotation_simulator_controls_in_sidebar(team_params_df: pd.DataFrame, global_serve_default: float):
+def rotation_simulator_controls_in_sidebar(
+    team_params_df: pd.DataFrame, global_breakpoint_default: float
+):
     """
     Sidebar controls with APPLY at the top.
     """
     st.sidebar.markdown("## Rotation simulator")
 
     # APPLY at the top
-    if st.sidebar.button("APPLY", type="primary", use_container_width=True):
+    if st.sidebar.button("APPLY", type="primary", width='stretch'):
         run_simulation_and_store()
 
-    # seed global_serve once
-    if "global_serve" not in st.session_state:
-        st.session_state["global_serve"] = global_serve_default
+    # seed global_breakpoint once
+    if "global_breakpoint" not in st.session_state:
+        st.session_state["global_breakpoint"] = global_breakpoint_default
 
     # tiebreak toggle
     st.sidebar.checkbox("Tiebreak", key="tiebreak")
@@ -212,8 +218,8 @@ def rotation_simulator_controls_in_sidebar(team_params_df: pd.DataFrame, global_
             key="score_team_b",
         )
 
-    # global serve slider
-    slider_sidebar("Global serve", key="global_serve")
+    # global breakpoint slider
+    slider_sidebar("Global breakpoint", key="global_breakpoint")
 
     st.sidebar.divider()
 
@@ -227,17 +233,18 @@ def rotation_simulator_controls_in_sidebar(team_params_df: pd.DataFrame, global_
 
 
 # ------------------------------------------------------------
-# Build fake config dataframes from current UI
+# Build config dataframes from current UI
 # ------------------------------------------------------------
 def build_global_df_from_ui() -> pd.DataFrame:
+    # MUST be called global_breakpoint, because simulator looks for that
     return pd.DataFrame(
         [
             {
                 "par_type": "global",
                 "team_id": "global",
                 "team_name": "global",
-                "par_name": "global_serve",
-                "par_value": st.session_state.get("global_serve", 0.0),
+                "par_name": "global_breakpoint",
+                "par_value": st.session_state.get("global_breakpoint", 0.0),
             }
         ]
     )
@@ -245,40 +252,42 @@ def build_global_df_from_ui() -> pd.DataFrame:
 
 def build_team_df_from_ui(prefix: str) -> pd.DataFrame:
     """
-    Build team df from current UI.
-    If user chose 'Reset', current_team_id/name will be 'Reset', which is fine.
+    Build team df from current UI using the same names as in params_out_break_sideout.csv
     """
     team_id = st.session_state.get(f"{prefix}_current_team_id") or ""
     team_name = st.session_state.get(f"{prefix}_current_team_name") or ""
 
     rows = []
 
+    # team-level breakpoint
     rows.append(
         {
             "par_type": "team",
             "team_id": team_id,
             "team_name": team_name,
-            "par_name": "serve_team_adjustment",
+            "par_name": "breakpoint_team_adjustment",
             "par_value": st.session_state.get(f"{prefix}_bp_adjustment", 0.0),
         }
     )
+    # team-level sideout
     rows.append(
         {
             "par_type": "team",
             "team_id": team_id,
             "team_name": team_name,
-            "par_name": "receive_team_adjustment",
+            "par_name": "sideout_team_adjustment",
             "par_value": st.session_state.get(f"{prefix}_so_adjustment", 0.0),
         }
     )
 
+    # rotation-level
     for pos in POSITIONS:
         rows.append(
             {
                 "par_type": "team",
                 "team_id": team_id,
                 "team_name": team_name,
-                "par_name": f"serve_pos_{pos}",
+                "par_name": f"breakpoint_pos_{pos}",
                 "par_value": st.session_state.get(
                     f"{prefix}_pos{pos}_bp_adjustment", 0.0
                 ),
@@ -289,7 +298,7 @@ def build_team_df_from_ui(prefix: str) -> pd.DataFrame:
                 "par_type": "team",
                 "team_id": team_id,
                 "team_name": team_name,
-                "par_name": f"receive_pos_{pos}",
+                "par_name": f"sideout_pos_{pos}",
                 "par_value": st.session_state.get(
                     f"{prefix}_pos{pos}_so_adjustment", 0.0
                 ),
@@ -303,13 +312,13 @@ def build_team_df_from_ui(prefix: str) -> pd.DataFrame:
 # Simulation
 # ------------------------------------------------------------
 def compute_rotation_probability_matrix(
-        global_df: pd.DataFrame,
-        team_home_df: pd.DataFrame,
-        team_away_df: pd.DataFrame,
-        serve_team: str,
-        score_team_a: int,
-        score_team_b: int,
-        is_tiebreak: bool,
+    global_df: pd.DataFrame,
+    team_home_df: pd.DataFrame,
+    team_away_df: pd.DataFrame,
+    serve_team: str,
+    score_team_a: int,
+    score_team_b: int,
+    is_tiebreak: bool,
 ):
     """
     Run the 6x6 grid using ONLY values from the UI.
@@ -414,13 +423,6 @@ def compute_rotation_probability_matrix(
 
 
 def style_rotation_matrix(pivot: pd.DataFrame):
-    """
-    - show values as % with 1 decimal
-    - color scale: min -> red, middle -> white, max -> green
-    - scale is based on actual min/max in the matrix
-    - if max-min <= 0.005 (0.5 percentage points) paint everything neutral
-    """
-    # actual min/max over the matrix
     min_val = pivot.min().min()
     max_val = pivot.max().max()
 
@@ -429,7 +431,6 @@ def style_rotation_matrix(pivot: pd.DataFrame):
 
     diff = max_val - min_val
 
-    # if everything is basically the same
     if diff <= 0.005:
         def all_neutral(_):
             return "background-color: rgb(255, 255, 220)"
@@ -438,32 +439,24 @@ def style_rotation_matrix(pivot: pd.DataFrame):
             pivot
             .style
             .format("{:.1%}")
-            .applymap(all_neutral)
+            .map(all_neutral)
         )
 
     mid_val = min_val + diff / 2.0
 
     def val_to_color(v: float) -> str:
-        # red -> white for [min .. mid]
-        # white -> green for [mid .. max]
-
         if v <= mid_val:
-            # t in [0..1] from min to mid
             t = (v - min_val) / (mid_val - min_val)
             t = max(0.0, min(1.0, t))
-            # red (255,0,0) to white (255,255,255)
             r = 255
             g = int(0 + (255 - 0) * t)
             b = int(0 + (255 - 0) * t)
         else:
-            # t in [0..1] from mid to max
             t = (v - mid_val) / (max_val - mid_val)
             t = max(0.0, min(1.0, t))
-            # white (255,255,255) to green (0,150,0)
-            r = int(255 + (0 - 255) * t)  # 255 -> 0
-            g = int(255 + (150 - 255) * t)  # 255 -> 150
-            b = int(255 + (0 - 255) * t)  # 255 -> 0
-
+            r = int(255 + (0 - 255) * t)
+            g = int(255 + (150 - 255) * t)
+            b = int(255 + (0 - 255) * t)
         return f"background-color: rgb({r},{g},{b})"
 
     def color_cell(val):
@@ -475,28 +468,11 @@ def style_rotation_matrix(pivot: pd.DataFrame):
         pivot
         .style
         .format("{:.1%}")
-        .applymap(color_cell)
+        .map(color_cell)
     )
-
-    def color_cell(val):
-        if pd.isna(val):
-            return ""
-        return val_to_color(float(val))
-
-    return pivot.style.format("{:.3f}").applymap(color_cell)
-
-    def color_cell(val):
-        if pd.isna(val):
-            return ""
-        return val_to_color(float(val))
-
-    return pivot.style.format("{:.3f}").applymap(color_cell)
 
 
 def run_simulation_and_store():
-    """
-    Called ONLY when user clicks APPLY.
-    """
     global_df = build_global_df_from_ui()
     team_home_df = build_team_df_from_ui("team_h")
     team_away_df = build_team_df_from_ui("team_a")
@@ -527,59 +503,43 @@ def run_simulation_and_store():
 
 
 def show_square_matrix(styled, pivot_df: pd.DataFrame):
-    """
-    Render the styled pivot with width/height tuned so cells look squarish.
-    `styled` is the Styler returned by your style_rotation_matrix.
-    """
     n_rows, n_cols = pivot_df.shape
-
-    # tweak to taste
-    cell_w = 90  # px per column
-    cell_h = 38  # px per row (including header height-ish)
-
+    cell_w = 90
+    cell_h = 38
     width = n_cols * cell_w
-    height = n_rows * cell_h + 40  # little extra for headers
+    height = n_rows * cell_h + 40
+    st.dataframe(styled, width=width, height=height)
 
-    st.dataframe(styled, use_container_width=False, width=width, height=height)
 
 def style_param_table(df: pd.DataFrame):
-    """
-    Style a params table so that par_value is colored:
-    - <= -0.5 -> red
-    - 0       -> white
-    - >= 0.5  -> green
-    and linearly in between.
-    """
     if "par_value" not in df.columns:
-        return df.style  # nothing to do
+        return df.style
 
     def color_val(v):
         try:
             v = float(v)
         except (TypeError, ValueError):
             return ""
-        # clamp first
         if v <= -0.5:
             return "background-color: rgb(255, 0, 0)"
         if v >= 0.5:
             return "background-color: rgb(0, 150, 0)"
 
         if v < 0:
-            # [-0.5 .. 0] -> red -> white
-            t = (v + 0.5) / 0.5  # -0.5 -> 0, 0 -> 1
+            t = (v + 0.5) / 0.5
             r = 255
             g = int(255 * t)
             b = int(255 * t)
         else:
-            # [0 .. 0.5] -> white -> green
-            t = v / 0.5  # 0 -> 0, 0.5 -> 1
-            r = int(255 * (1 - t))     # 255 -> 0
-            g = int(255 - (255 - 150) * t)  # 255 -> 150
-            b = int(255 * (1 - t))     # 255 -> 0
+            t = v / 0.5
+            r = int(255 * (1 - t))
+            g = int(255 - (255 - 150) * t)
+            b = int(255 * (1 - t))
         return f"background-color: rgb({r},{g},{b})"
 
-    styled = df.style.applymap(color_val, subset=["par_value"])
+    styled = df.style.map(color_val, subset=["par_value"])
     return styled
+
 
 # ------------------------------------------------------------
 # Pages
@@ -587,9 +547,9 @@ def style_param_table(df: pd.DataFrame):
 def page_rotation_main():
     df_all = load_params()
     team_params_df = get_team_params(df_all)
-    global_serve_default = get_global_serve_default(df_all)
+    global_breakpoint_default = get_global_breakpoint_default(df_all)
 
-    rotation_simulator_controls_in_sidebar(team_params_df, global_serve_default)
+    rotation_simulator_controls_in_sidebar(team_params_df, global_breakpoint_default)
 
     st.title("Rotation simulator")
 
@@ -603,45 +563,44 @@ def page_rotation_main():
             st.dataframe(st.session_state["last_rotation_df"])
 
         with st.expander("Config sent to simulator"):
-            # global
             st.markdown("**global_df**")
             global_df = st.session_state["last_rotation_global_df"]
             st.dataframe(style_param_table(global_df))
 
-            # take the dfs from session
             team_home_df = st.session_state["last_rotation_team_home_df"]
             team_away_df = st.session_state["last_rotation_team_away_df"]
+
             c1, c2 = st.columns(2)
 
             # split home
-            home_serve_df = team_home_df[
-                team_home_df["par_name"].str.startswith("serve_")
+            home_break_df = team_home_df[
+                team_home_df["par_name"].str.startswith("breakpoint_")
             ].reset_index(drop=True)
-            home_receive_df = team_home_df[
-                team_home_df["par_name"].str.startswith("receive_")
+            home_sideout_df = team_home_df[
+                team_home_df["par_name"].str.startswith("sideout_")
             ].reset_index(drop=True)
 
             # split away
-            away_serve_df = team_away_df[
-                team_away_df["par_name"].str.startswith("serve_")
+            away_break_df = team_away_df[
+                team_away_df["par_name"].str.startswith("breakpoint_")
             ].reset_index(drop=True)
-            away_receive_df = team_away_df[
-                team_away_df["par_name"].str.startswith("receive_")
+            away_sideout_df = team_away_df[
+                team_away_df["par_name"].str.startswith("sideout_")
             ].reset_index(drop=True)
 
             with c1:
-                st.markdown("**team_home_df – serve params**")
-                st.dataframe(style_param_table(home_serve_df))
+                st.markdown("**team_home_df – breakpoint params**")
+                st.dataframe(style_param_table(home_break_df))
 
-                st.markdown("**team_home_df – receive params**")
-                st.dataframe(style_param_table(home_receive_df))
+                st.markdown("**team_home_df – sideout params**")
+                st.dataframe(style_param_table(home_sideout_df))
 
             with c2:
-                st.markdown("**team_away_df – serve params**")
-                st.dataframe(style_param_table(away_serve_df))
+                st.markdown("**team_away_df – breakpoint params**")
+                st.dataframe(style_param_table(away_break_df))
 
-                st.markdown("**team_away_df – receive params**")
-                st.dataframe(style_param_table(away_receive_df))
+                st.markdown("**team_away_df – sideout params**")
+                st.dataframe(style_param_table(away_sideout_df))
 
             st.markdown("**start scores / serve / tiebreak**")
             st.write(

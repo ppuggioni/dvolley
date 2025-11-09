@@ -2,57 +2,69 @@ import pandas as pd
 import numpy as np
 from functools import lru_cache
 from typing import Optional
-import copy
 
 
 class VolleyballPointByPointSimulator:
     """
-    Point-by-point volleyball simulator based on fitted parameters.
+    Point-by-point volleyball simulator based on fitted *breakpoint/sideout* parameters.
 
-    Usage:
-    - load_parameters(global_df, team_home_df, team_away_df)
-    - set_initial_conditions(...)
-    - set_end_point(set_n=0, point_n=0)  # 0,0 = full match
-    - run_simulation() -> pd.DataFrame
+    Expected parameter file rows (like params_out_break_sideout.csv):
+      - par_name == "global_breakpoint" (single global row)
+      - per-team rows with:
+            "breakpoint_team_adjustment"
+            "sideout_team_adjustment"
+            "breakpoint_pos_1" .. "breakpoint_pos_6"
+            "sideout_pos_1"    .. "sideout_pos_6"
+
+    Model for each rally (server tries to score a break point):
+
+        logit P(server wins) =
+            global_breakpoint
+          + server.breakpoint_team_adjustment
+          + server.breakpoint_pos[current_rotation]
+          - receiver.sideout_team_adjustment
+          - receiver.sideout_pos[current_rotation]
+
+    So: **bigger sideout** makes it harder for the server to score → we subtract it.
     """
 
     def __init__(self, seed: Optional[int] = 123, best_of: int = 5):
         self.rng = np.random.default_rng(seed)
         self.best_of = best_of  # e.g. 5 -> first to 3
 
-        # parameters
-        self.global_logit = 0.0
-        self.home_params = {}
-        self.away_params = {}
-        self.team_id_h = None
-        self.team_id_a = None
-        self.team_name_h = None
-        self.team_name_a = None
+        # parameters (filled by load_parameters)
+        self.global_logit: float = 0.0
+        self.home_params: dict = {}
+        self.away_params: dict = {}
+        self.team_id_h: Optional[str] = None
+        self.team_id_a: Optional[str] = None
+        self.team_name_h: Optional[str] = None
+        self.team_name_a: Optional[str] = None
 
-        # match metadata (optional)
-        self.match_type = ""
-        self.match_date = ""
+        # optional metadata
+        self.match_type: str = ""
+        self.match_date: str = ""
 
         # current match state
-        self.cur_set = 1
-        self.set_won_h = 0
-        self.set_won_a = 0
-        self.point_h = 0
-        self.point_a = 0
-        self.p_h = 1
-        self.p_a = 1
-        self.serve_team = "a"  # 'h' or 'a'
+        self.cur_set: int = 1
+        self.set_won_h: int = 0
+        self.set_won_a: int = 0
+        self.point_h: int = 0
+        self.point_a: int = 0
+        self.p_h: int = 1   # home setter/rotation 1..6
+        self.p_a: int = 1   # away rotation
+        self.serve_team: str = "a"  # 'h' or 'a'
 
-        # remember initial rotations so we can reset at new set
-        self._start_p_h = 1
-        self._start_p_a = 1
+        # remember initial rotations to reset at new set
+        self._start_p_h: int = 1
+        self._start_p_a: int = 1
 
-        # stop condition (0,0 means: play full match)
-        self.end_set = 0
-        self.end_rally_in_set = 0
+        # stop condition (0,0 => full match)
+        self.end_set: int = 0
+        self.end_rally_in_set: int = 0
 
     # ------------------------------------------------------------------
-    # LOADING PARAMETERS
+    # LOAD PARAMETERS
     # ------------------------------------------------------------------
     def load_parameters(
         self,
@@ -62,42 +74,47 @@ class VolleyballPointByPointSimulator:
         match_type: str = "",
         match_date: str = "",
     ):
-        """Parse the three dataframes and store them."""
-
-        # 1) global
-        g = global_df.loc[global_df["par_name"] == "global_serve"]
+        """
+        Parse the 3 dataframes coming from params_out_break_sideout.csv.
+        """
+        g = global_df.loc[global_df["par_name"] == "global_breakpoint"]
         if g.empty:
-            raise ValueError("global_df must contain a row with par_name == 'global_serve'")
+            raise ValueError("global_df must contain par_name == 'global_breakpoint'")
         self.global_logit = float(g["par_value"].iloc[0])
 
         self.match_type = match_type
         self.match_date = match_date
 
-        def _parse_team(df: pd.DataFrame):
-            team_id = df["team_id"].iloc[0]
+        def _parse_team(df: pd.DataFrame) -> dict:
+            # assume df is filtered to one team
+            team_id = str(df["team_id"].iloc[0])
             team_name = df["team_name"].iloc[0]
-            d = {
+
+            team_dict = {
                 "team_id": team_id,
                 "team_name": team_name,
-                "serve_team_adjustment": 0.0,
-                "receive_team_adjustment": 0.0,
-                "serve_pos": {i: 0.0 for i in range(1, 7)},
-                "receive_pos": {i: 0.0 for i in range(1, 7)},
+                "breakpoint_team_adjustment": 0.0,
+                "sideout_team_adjustment": 0.0,
+                "break_pos": {i: 0.0 for i in range(1, 7)},
+                "sideout_pos": {i: 0.0 for i in range(1, 7)},
             }
+
             for _, row in df.iterrows():
                 par_name = row["par_name"]
                 val = float(row["par_value"])
-                if par_name == "serve_team_adjustment":
-                    d["serve_team_adjustment"] = val
-                elif par_name == "receive_team_adjustment":
-                    d["receive_team_adjustment"] = val
-                elif par_name.startswith("serve_pos_"):
+
+                if par_name == "breakpoint_team_adjustment":
+                    team_dict["breakpoint_team_adjustment"] = val
+                elif par_name == "sideout_team_adjustment":
+                    team_dict["sideout_team_adjustment"] = val
+                elif par_name.startswith("breakpoint_pos_"):
                     pos = int(par_name.split("_")[-1])
-                    d["serve_pos"][pos] = val
-                elif par_name.startswith("receive_pos_"):
+                    team_dict["break_pos"][pos] = val
+                elif par_name.startswith("sideout_pos_"):
                     pos = int(par_name.split("_")[-1])
-                    d["receive_pos"][pos] = val
-            return d
+                    team_dict["sideout_pos"][pos] = val
+
+            return team_dict
 
         self.home_params = _parse_team(team_home_df)
         self.away_params = _parse_team(team_away_df)
@@ -122,7 +139,7 @@ class VolleyballPointByPointSimulator:
         current_set: int = 1,
     ):
         """
-        Set starting situation (like starting from mid-match).
+        Set starting situation for the match/set.
         """
         self.set_won_h = set_won_h
         self.set_won_a = set_won_a
@@ -141,15 +158,15 @@ class VolleyballPointByPointSimulator:
     # ------------------------------------------------------------------
     def set_end_point(self, set_n: int = 0, point_n: int = 0):
         """
-        - set_n = 0  AND point_n = 0  -> simulate the whole match (until someone wins)
-        - set_n = K  AND point_n = 0  -> simulate to the END of set K
-        - set_n = K  AND point_n = M  -> simulate to rally M of set K
+        - (0,0): play full match
+        - (K,0): play to END of set K
+        - (K,M): play to rally M of set K
         """
         self.end_set = set_n
         self.end_rally_in_set = point_n
 
     # ------------------------------------------------------------------
-    # helpers
+    # HELPERS
     # ------------------------------------------------------------------
     @staticmethod
     def _sigmoid(x: float) -> float:
@@ -157,23 +174,28 @@ class VolleyballPointByPointSimulator:
 
     @staticmethod
     def _rotate_on_sideout(pos: int) -> int:
-        """volleyball rotation: 6 -> 5 -> 4 -> 3 -> 2 -> 1 -> 6"""
+        """volleyball rotation order, 6 → 5 → 4 → 3 → 2 → 1 → 6"""
         return pos - 1 if pos > 1 else 6
 
     def _rally_win_prob(self) -> float:
-        """p(server wins) given current state."""
+        """
+        p(server wins) = σ(global_breakpoint + server_break + server_break_pos
+                           - recv_sideout - recv_sideout_pos)
+        """
         logit = self.global_logit
 
         if self.serve_team == "h":
-            logit += self.home_params["serve_team_adjustment"]
-            logit += self.away_params["receive_team_adjustment"]
-            logit += self.home_params["serve_pos"].get(self.p_h, 0.0)
-            logit += self.away_params["receive_pos"].get(self.p_a, 0.0)
+            # server = home, receiver = away
+            logit += self.home_params["breakpoint_team_adjustment"]
+            logit += self.home_params["break_pos"].get(self.p_h, 0.0)
+            logit -= self.away_params["sideout_team_adjustment"]
+            logit -= self.away_params["sideout_pos"].get(self.p_a, 0.0)
         else:
-            logit += self.away_params["serve_team_adjustment"]
-            logit += self.home_params["receive_team_adjustment"]
-            logit += self.away_params["serve_pos"].get(self.p_a, 0.0)
-            logit += self.home_params["receive_pos"].get(self.p_h, 0.0)
+            # server = away, receiver = home
+            logit += self.away_params["breakpoint_team_adjustment"]
+            logit += self.away_params["break_pos"].get(self.p_a, 0.0)
+            logit -= self.home_params["sideout_team_adjustment"]
+            logit -= self.home_params["sideout_pos"].get(self.p_h, 0.0)
 
         return self._sigmoid(logit)
 
@@ -181,22 +203,22 @@ class VolleyballPointByPointSimulator:
     # SIMULATION
     # ------------------------------------------------------------------
     def run_simulation(self) -> pd.DataFrame:
+        """
+        Simulate rally-by-rally until the stop condition is met.
+        """
         rows = []
         rallies_in_this_set = 0
 
         while True:
-            # ----- STOP CONDITIONS (top of loop) -----
-            if self.end_set == 0:
-                # full match, we will check match end after rally
-                pass
-            else:
+            # top-of-loop stop for partial sims
+            if self.end_set != 0:
                 if self.cur_set > self.end_set:
                     break
                 if self.cur_set == self.end_set and self.end_rally_in_set > 0:
                     if rallies_in_this_set >= self.end_rally_in_set:
                         break
 
-            # ----- record pre state -----
+            # pre state
             pre_set_won_h = self.set_won_h
             pre_set_won_a = self.set_won_a
             pre_point_won_h = self.point_h
@@ -205,33 +227,39 @@ class VolleyballPointByPointSimulator:
             pre_p_a = self.p_a
             pre_serve_team = self.serve_team
 
-            # probability + outcome
+            # sample rally
             p_server = self._rally_win_prob()
             server_wins = self.rng.random() < p_server
 
-            # ----- update according to outcome -----
             if pre_serve_team == "h":
                 if server_wins:
+                    # home scored on serve (breakpoint)
                     self.point_h += 1
                     point_won_team = "h"
                     point_won_h = 1
                     point_won_a = 0
+                    # home keeps serving, no rotation
                     self.serve_team = "h"
                 else:
+                    # away sided out
                     self.point_a += 1
                     point_won_team = "a"
                     point_won_h = 0
                     point_won_a = 1
+                    # away will serve next, away rotates
                     self.serve_team = "a"
                     self.p_a = self._rotate_on_sideout(self.p_a)
-            else:  # away serving
+            else:
+                # away was serving
                 if server_wins:
+                    # away scored on serve
                     self.point_a += 1
                     point_won_team = "a"
                     point_won_h = 0
                     point_won_a = 1
                     self.serve_team = "a"
                 else:
+                    # home sided out
                     self.point_h += 1
                     point_won_team = "h"
                     point_won_h = 1
@@ -239,7 +267,7 @@ class VolleyballPointByPointSimulator:
                     self.serve_team = "h"
                     self.p_h = self._rotate_on_sideout(self.p_h)
 
-            # ----- check set end -----
+            # check set end
             set_finished = False
             target_points = 25 if self.cur_set < self.best_of else 15
             if (self.point_h >= target_points or self.point_a >= target_points) and \
@@ -250,6 +278,7 @@ class VolleyballPointByPointSimulator:
             post_set_won_a = self.set_won_a
 
             if set_finished:
+                # assign set
                 if self.point_h > self.point_a:
                     self.set_won_h += 1
                 else:
@@ -258,21 +287,20 @@ class VolleyballPointByPointSimulator:
                 post_set_won_h = self.set_won_h
                 post_set_won_a = self.set_won_a
 
-                # prepare next set
+                # go to next set
                 self.cur_set += 1
                 self.point_h = 0
                 self.point_a = 0
                 rallies_in_this_set = 0
+                # reset rotations
                 self.p_h = self._start_p_h
                 self.p_a = self._start_p_a
+                # pick starting server of next set
                 self.serve_team = "a" if self.cur_set % 2 == 1 else "h"
             else:
                 rallies_in_this_set += 1
 
-            # serve flags for row
-            serve_h = 1 if pre_serve_team == "h" else 0
-            serve_a = 1 if pre_serve_team == "a" else 0
-
+            # row
             rows.append(
                 {
                     "match_type": self.match_type,
@@ -295,13 +323,13 @@ class VolleyballPointByPointSimulator:
                     "point_won_h": point_won_h,
                     "point_won_a": point_won_a,
                     "point_won_team": point_won_team,
-                    "serve_h": serve_h,
-                    "serve_a": serve_a,
+                    "serve_h": 1 if pre_serve_team == "h" else 0,
+                    "serve_a": 1 if pre_serve_team == "a" else 0,
                     "serve_team": pre_serve_team,
                 }
             )
 
-            # ----- match end? -----
+            # match end?
             match_over = (
                 self.set_won_h > self.best_of // 2
                 or self.set_won_a > self.best_of // 2
@@ -317,163 +345,45 @@ class VolleyballPointByPointSimulator:
 
 
 # ======================================================================
-# NEW: Probability wrapper
+# PROBABILITY WRAPPER
 # ======================================================================
-import pandas as pd
-import numpy as np
-from functools import lru_cache
-
-
 class VolleyballProbabilitySimulator:
     """
-    Wraps a VolleyballPointByPointSimulator and gives you:
-    - run_simulations(n, save_path)  -> big df with sim_n
-    - home_win_prob()                -> MC estimate from last run
-    - home_win_analytical_calculations(max_extra=10) -> DP / exact-ish set win prob
-      (bounded to avoid infinite recursion on long deuces)
+    Wraps a VolleyballPointByPointSimulator and provides:
+      - run_simulations(...)
+      - home_win_prob()
+      - home_win_analytical_calculations(...)
+    All using the SAME breakpoint/sideout formula.
     """
 
-    def __init__(self, base_simulator):
+    def __init__(self, base_simulator: VolleyballPointByPointSimulator):
         self.base_sim = base_simulator
-        self._last_sim_dfs = []
         self._last_home_win_rate = None
 
-    # ----------------------------------------------------------
-    # MONTE CARLO
-    # ----------------------------------------------------------
-    def run_simulations(self, n: int = 1000, save_path: str | None = None) -> pd.DataFrame:
-        all_rows = []
-        home_wins = 0
-
-        for i in range(n):
-            sim = self._clone_base_sim()
-            df_i = sim.run_simulation()
-            df_i["sim_n"] = i
-            all_rows.append(df_i)
-
-            last_row = df_i.iloc[-1]
-            if last_row["post_set_won_h"] > last_row["post_set_won_a"]:
-                home_wins += 1
-
-        big_df = pd.concat(all_rows, ignore_index=True)
-        self._last_sim_dfs = [big_df]
-        self._last_home_win_rate = home_wins / n
-
-        if save_path is not None:
-            big_df.to_csv(save_path, index=False, encoding="utf-8")
-
-        return big_df
-
-    def home_win_prob(self) -> float:
-        if self._last_home_win_rate is None:
-            raise RuntimeError("Run run_simulations(...) first.")
-        return self._last_home_win_rate
-
-    # ----------------------------------------------------------
-    # ANALYTICAL / DP
-    # ----------------------------------------------------------
-    def home_win_analytical_calculations(self, max_extra: int = 20) -> float:
-        """
-        Return P(home wins THIS set) starting from the current state
-        of the base simulator, using a bounded DP to avoid infinite recursion.
-
-        max_extra: how many points beyond normal target (25 or 15) we allow
-                   before we force a decision.
-        """
+    def _clone_base_sim(self) -> VolleyballPointByPointSimulator:
         bs = self.base_sim
+        new_sim = VolleyballPointByPointSimulator(seed=None, best_of=bs.best_of)
 
-        # current state
-        s_h0 = bs.point_h
-        s_a0 = bs.point_a
-        p_h0 = bs.p_h
-        p_a0 = bs.p_a
-        srv0 = bs.serve_team
-        cur_set = bs.cur_set
-
-        target_points = 25 if cur_set < bs.best_of else 15
-        cap = target_points + max_extra  # upper bound on score
-
-        global_logit = bs.global_logit
-        home_params = bs.home_params
-        away_params = bs.away_params
-
-        def rally_win_prob_from_model(p_h: int, p_a: int, srv: str) -> float:
-            """Exactly the same formula as the simulator uses."""
-            logit = global_logit
-            if srv == "h":
-                logit += home_params["serve_team_adjustment"]
-                logit += away_params["receive_team_adjustment"]
-                logit += home_params["serve_pos"].get(p_h, 0.0)
-                logit += away_params["receive_pos"].get(p_a, 0.0)
-            else:
-                logit += away_params["serve_team_adjustment"]
-                logit += home_params["receive_team_adjustment"]
-                logit += away_params["serve_pos"].get(p_a, 0.0)
-                logit += home_params["receive_pos"].get(p_h, 0.0)
-            return 1.0 / (1.0 + np.exp(-logit))
-
-        def rotate(pos: int) -> int:
-            return pos - 1 if pos > 1 else 6
-
-        @lru_cache(maxsize=None)
-        def V(s_h: int, s_a: int, p_h: int, p_a: int, srv: str) -> float:
-            # 1) normal terminal condition
-            if s_h >= target_points or s_a >= target_points:
-                if abs(s_h - s_a) >= 2:
-                    return 1.0 if s_h > s_a else 0.0
-                # else: it's deuce-ish, fall through to bounded logic
-
-            # 2) bounded terminal to avoid infinite recursion
-            if s_h >= cap or s_a >= cap:
-                if s_h > s_a:
-                    return 1.0
-                elif s_a > s_h:
-                    return 0.0
-                else:
-                    # super rare tie at cap, split
-                    return 0.5
-
-            q = rally_win_prob_from_model(p_h, p_a, srv)
-
-            if srv == "h":
-                # home serves
-                win_val = V(s_h + 1, s_a, p_h, p_a, "h")
-                lose_val = V(s_h, s_a + 1, p_h, rotate(p_a), "a")
-                return q * win_val + (1 - q) * lose_val
-            else:
-                # away serves
-                win_val = V(s_h, s_a + 1, p_h, p_a, "a")
-                lose_val = V(s_h + 1, s_a, rotate(p_h), p_a, "h")
-                return q * win_val + (1 - q) * lose_val
-
-        return V(s_h0, s_a0, p_h0, p_a0, srv0)
-
-    # ----------------------------------------------------------
-    # internal helper
-    # ----------------------------------------------------------
-    def _clone_base_sim(self):
-        bs = self.base_sim
-
-        new_sim = bs.__class__(seed=None, best_of=bs.best_of)
-
-        # copy params
+        # copy parameters
         new_sim.global_logit = bs.global_logit
         new_sim.home_params = {
             "team_id": bs.home_params["team_id"],
             "team_name": bs.home_params["team_name"],
-            "serve_team_adjustment": bs.home_params["serve_team_adjustment"],
-            "receive_team_adjustment": bs.home_params["receive_team_adjustment"],
-            "serve_pos": dict(bs.home_params["serve_pos"]),
-            "receive_pos": dict(bs.home_params["receive_pos"]),
+            "breakpoint_team_adjustment": bs.home_params["breakpoint_team_adjustment"],
+            "sideout_team_adjustment": bs.home_params["sideout_team_adjustment"],
+            "break_pos": dict(bs.home_params["break_pos"]),
+            "sideout_pos": dict(bs.home_params["sideout_pos"]),
         }
         new_sim.away_params = {
             "team_id": bs.away_params["team_id"],
             "team_name": bs.away_params["team_name"],
-            "serve_team_adjustment": bs.away_params["serve_team_adjustment"],
-            "receive_team_adjustment": bs.away_params["receive_team_adjustment"],
-            "serve_pos": dict(bs.away_params["serve_pos"]),
-            "receive_pos": dict(bs.away_params["receive_pos"]),
+            "breakpoint_team_adjustment": bs.away_params["breakpoint_team_adjustment"],
+            "sideout_team_adjustment": bs.away_params["sideout_team_adjustment"],
+            "break_pos": dict(bs.away_params["break_pos"]),
+            "sideout_pos": dict(bs.away_params["sideout_pos"]),
         }
+
+        # copy meta
         new_sim.team_id_h = bs.team_id_h
         new_sim.team_id_a = bs.team_id_a
         new_sim.team_name_h = bs.team_name_h
@@ -493,64 +403,136 @@ class VolleyballProbabilitySimulator:
         new_sim._start_p_h = bs._start_p_h
         new_sim._start_p_a = bs._start_p_a
 
-        # end conditions
+        # copy end condition
         new_sim.end_set = bs.end_set
         new_sim.end_rally_in_set = bs.end_rally_in_set
 
         return new_sim
 
+    # ----------------------------------------------------------
+    # Monte Carlo
+    # ----------------------------------------------------------
+    def run_simulations(self, n: int = 1000, save_path: str | None = None) -> pd.DataFrame:
+        all_rows = []
+        home_wins = 0
+
+        for i in range(n):
+            sim = self._clone_base_sim()
+            df_i = sim.run_simulation()
+            df_i["sim_n"] = i
+            all_rows.append(df_i)
+
+            last_row = df_i.iloc[-1]
+            if last_row["post_set_won_h"] > last_row["post_set_won_a"]:
+                home_wins += 1
+
+        big_df = pd.concat(all_rows, ignore_index=True)
+        self._last_home_win_rate = home_wins / n
+
+        if save_path:
+            big_df.to_csv(save_path, index=False, encoding="utf-8")
+
+        return big_df
+
+    def home_win_prob(self) -> float:
+        if self._last_home_win_rate is None:
+            raise RuntimeError("Run run_simulations(...) first.")
+        return self._last_home_win_rate
+
+    # ----------------------------------------------------------
+    # Analytical set win
+    # ----------------------------------------------------------
+    def home_win_analytical_calculations(self, max_extra: int = 20) -> float:
+        """
+        Compute P(home wins THIS set) from current state, using the same
+        breakpoint/sideout logit. max_extra bounds very long deuces.
+        """
+        bs = self.base_sim
+
+        s_h0 = bs.point_h
+        s_a0 = bs.point_a
+        p_h0 = bs.p_h
+        p_a0 = bs.p_a
+        srv0 = bs.serve_team
+        cur_set = bs.cur_set
+
+        target_points = 25 if cur_set < bs.best_of else 15
+        cap = target_points + max_extra
+
+        gl = bs.global_logit
+        hp = bs.home_params
+        ap = bs.away_params
+
+        def rally_prob(p_h: int, p_a: int, srv: str) -> float:
+            logit = gl
+            if srv == "h":
+                logit += hp["breakpoint_team_adjustment"]
+                logit += hp["break_pos"].get(p_h, 0.0)
+                logit -= ap["sideout_team_adjustment"]
+                logit -= ap["sideout_pos"].get(p_a, 0.0)
+            else:
+                logit += ap["breakpoint_team_adjustment"]
+                logit += ap["break_pos"].get(p_a, 0.0)
+                logit -= hp["sideout_team_adjustment"]
+                logit -= hp["sideout_pos"].get(p_h, 0.0)
+            return 1.0 / (1.0 + np.exp(-logit))
+
+        def rotate(pos: int) -> int:
+            return pos - 1 if pos > 1 else 6
+
+        @lru_cache(maxsize=None)
+        def V(s_h: int, s_a: int, p_h: int, p_a: int, srv: str) -> float:
+            # normal terminal (win by 2)
+            if (s_h >= target_points or s_a >= target_points) and abs(s_h - s_a) >= 2:
+                return 1.0 if s_h > s_a else 0.0
+
+            # bounded terminal
+            if s_h >= cap or s_a >= cap:
+                if s_h > s_a:
+                    return 1.0
+                if s_a > s_h:
+                    return 0.0
+                return 0.5
+
+            q = rally_prob(p_h, p_a, srv)
+
+            if srv == "h":
+                win_val = V(s_h + 1, s_a, p_h, p_a, "h")
+                lose_val = V(s_h, s_a + 1, p_h, rotate(p_a), "a")
+                return q * win_val + (1 - q) * lose_val
+            else:
+                win_val = V(s_h, s_a + 1, p_h, p_a, "a")
+                lose_val = V(s_h + 1, s_a, rotate(p_h), p_a, "h")
+                return q * win_val + (1 - q) * lose_val
+
+        return V(s_h0, s_a0, p_h0, p_a0, srv0)
 
 
-# ======================================================================
-# MAIN EXAMPLE
-# ======================================================================
+# quick manual test
 if __name__ == "__main__":
-    # your params file
-    params_path = "params_out.csv"
+    params_path = "params_out_break_sideout.csv"
     team_h_id = "6727"
-    team_a_id = "6747"
+    team_a_id = "6736"
 
-    all_params = pd.read_csv(params_path)
+    all_params = pd.read_csv(params_path, dtype={"team_id": str})
+    global_df = all_params[all_params["par_type"] == "global"]
+    team_home_df = all_params[(all_params["par_type"] == "team") & (all_params["team_id"] == team_h_id)]
+    team_away_df = all_params[(all_params["par_type"] == "team") & (all_params["team_id"] == team_a_id)]
 
-    global_df = all_params.loc[all_params["par_type"] == "global"]
-    team_home_df = all_params.loc[
-        (all_params["par_type"] == "team") & (all_params["team_id"] == team_h_id)
-    ]
-    team_away_df = all_params.loc[
-        (all_params["par_type"] == "team") & (all_params["team_id"] == team_a_id)
-    ]
-
-    # 1) make base simulator
-    base_sim = VolleyballPointByPointSimulator(seed=None)
-    base_sim.load_parameters(
-        global_df,
-        team_home_df,
-        team_away_df,
-        match_type="Amichevole",
-        match_date="08/10/2025",
+    base = VolleyballPointByPointSimulator(seed=42)
+    base.load_parameters(global_df, team_home_df, team_away_df,
+                         match_type="Amichevole",
+                         match_date="08/10/2025")
+    base.set_initial_conditions(
+        set_won_h=0, set_won_a=0,
+        point_won_h=0, point_won_a=0,
+        p_h=6, p_a=5,
+        serve_team="a",
+        current_set=1,
     )
-    # start exactly like your DV snippet
-    base_sim.set_initial_conditions(
-        set_won_h=2,
-        set_won_a=2,
-        point_won_h=15,
-        point_won_a=15,
-        p_h=1,   # home setter in 1
-        p_a=1,   # away setter in 1
-        serve_team="h",
-        current_set=5,
-    )
-    # full match
-    base_sim.set_end_point(set_n=5, point_n=0)
+    base.set_end_point(set_n=1, point_n=0)
 
-    # 2) probability simulator
-    prob_sim = VolleyballProbabilitySimulator(base_sim)
-
-    # run, save
-    big_df = prob_sim.run_simulations(n=10000, save_path=None)
-    print("Home win probability:", prob_sim.home_win_prob())
-    p_exact = prob_sim.home_win_analytical_calculations()
-    print("Exact home set-win prob:", p_exact)
-
-    # if you want to peek:
-    print(big_df.head())
+    prob = VolleyballProbabilitySimulator(base)
+    df = prob.run_simulations(n=10000)
+    print("MC home win prob:", prob.home_win_prob())
+    print("Analytical home set-win prob:", prob.home_win_analytical_calculations())
