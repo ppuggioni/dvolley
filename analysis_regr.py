@@ -414,7 +414,7 @@ class VolleyballServeReceiveRegModelNoHome:
 # example usage
 if __name__ == "__main__":
     m = VolleyballServeReceiveRegModelNoHome()
-    m.load_data("clean_data.csv")
+    m.load_data("clean_data_2.csv")
     m.fit()
-    params_df = m.viz_parameters(save_path="params_out.csv")
+    params_df = m.viz_parameters(save_path="params_out_2.csv")
     print(params_df.head(40))

@@ -6,6 +6,7 @@ import pandas as pd
 # ------------------------------------------------------------
 PAGE_ROTATION = "rotation_simulator"
 PAGE_WIP = "work in progress"
+PARAMS_FILE = "./params_out_2.csv"
 
 POSITIONS = range(1, 7)
 SLIDER_MIN = -2.0
@@ -18,7 +19,7 @@ SLIDER_STEP = 0.01
 # Load CSV once
 # ------------------------------------------------------------
 @st.cache_data
-def load_params(path: str = "./params_out.csv") -> pd.DataFrame:
+def load_params(path: str = PARAMS_FILE) -> pd.DataFrame:
     """Load the whole params file (global + team)."""
     return pd.read_csv(path, dtype={"team_id": str})
 
@@ -541,6 +542,44 @@ def show_square_matrix(styled, pivot_df: pd.DataFrame):
 
     st.dataframe(styled, use_container_width=False, width=width, height=height)
 
+def style_param_table(df: pd.DataFrame):
+    """
+    Style a params table so that par_value is colored:
+    - <= -0.5 -> red
+    - 0       -> white
+    - >= 0.5  -> green
+    and linearly in between.
+    """
+    if "par_value" not in df.columns:
+        return df.style  # nothing to do
+
+    def color_val(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return ""
+        # clamp first
+        if v <= -0.5:
+            return "background-color: rgb(255, 0, 0)"
+        if v >= 0.5:
+            return "background-color: rgb(0, 150, 0)"
+
+        if v < 0:
+            # [-0.5 .. 0] -> red -> white
+            t = (v + 0.5) / 0.5  # -0.5 -> 0, 0 -> 1
+            r = 255
+            g = int(255 * t)
+            b = int(255 * t)
+        else:
+            # [0 .. 0.5] -> white -> green
+            t = v / 0.5  # 0 -> 0, 0.5 -> 1
+            r = int(255 * (1 - t))     # 255 -> 0
+            g = int(255 - (255 - 150) * t)  # 255 -> 150
+            b = int(255 * (1 - t))     # 255 -> 0
+        return f"background-color: rgb({r},{g},{b})"
+
+    styled = df.style.applymap(color_val, subset=["par_value"])
+    return styled
 
 # ------------------------------------------------------------
 # Pages
@@ -564,12 +603,46 @@ def page_rotation_main():
             st.dataframe(st.session_state["last_rotation_df"])
 
         with st.expander("Config sent to simulator"):
+            # global
             st.markdown("**global_df**")
-            st.dataframe(st.session_state["last_rotation_global_df"])
-            st.markdown("**team_home_df**")
-            st.dataframe(st.session_state["last_rotation_team_home_df"])
-            st.markdown("**team_away_df**")
-            st.dataframe(st.session_state["last_rotation_team_away_df"])
+            global_df = st.session_state["last_rotation_global_df"]
+            st.dataframe(style_param_table(global_df))
+
+            # take the dfs from session
+            team_home_df = st.session_state["last_rotation_team_home_df"]
+            team_away_df = st.session_state["last_rotation_team_away_df"]
+            c1, c2 = st.columns(2)
+
+            # split home
+            home_serve_df = team_home_df[
+                team_home_df["par_name"].str.startswith("serve_")
+            ].reset_index(drop=True)
+            home_receive_df = team_home_df[
+                team_home_df["par_name"].str.startswith("receive_")
+            ].reset_index(drop=True)
+
+            # split away
+            away_serve_df = team_away_df[
+                team_away_df["par_name"].str.startswith("serve_")
+            ].reset_index(drop=True)
+            away_receive_df = team_away_df[
+                team_away_df["par_name"].str.startswith("receive_")
+            ].reset_index(drop=True)
+
+            with c1:
+                st.markdown("**team_home_df – serve params**")
+                st.dataframe(style_param_table(home_serve_df))
+
+                st.markdown("**team_home_df – receive params**")
+                st.dataframe(style_param_table(home_receive_df))
+
+            with c2:
+                st.markdown("**team_away_df – serve params**")
+                st.dataframe(style_param_table(away_serve_df))
+
+                st.markdown("**team_away_df – receive params**")
+                st.dataframe(style_param_table(away_receive_df))
+
             st.markdown("**start scores / serve / tiebreak**")
             st.write(
                 {
@@ -579,6 +652,7 @@ def page_rotation_main():
                     "tiebreak": st.session_state.get("last_rotation_is_tiebreak"),
                 }
             )
+
     else:
         st.info("Set your parameters and click APPLY to run the rotation grid.")
 

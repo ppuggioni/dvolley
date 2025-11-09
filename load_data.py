@@ -299,7 +299,7 @@ def dvw_rallies_to_df(path: str) -> pd.DataFrame:
 if __name__ == "__main__":
 
     input_dir_path = "./data"
-    output_path = './clean_data.csv'
+    output_path = './clean_data_2.csv'
 
     # list files in the directory
     input_file_list = list_files_sorted(input_dir_path)
