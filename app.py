@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from typing import Optional
 
 # ------------------------------------------------------------
 # App configuration / constants
@@ -525,6 +526,40 @@ def prepare_pivot_for_display(pivot: pd.DataFrame, away_label: str) -> pd.DataFr
     return display
 
 
+def _pivot_without_avg(pivot: pd.DataFrame) -> pd.DataFrame:
+    return pivot.loc[pivot.index != 0, pivot.columns != 0]
+
+
+def best_away_response_table(
+    pivot: pd.DataFrame, home_label: str, away_label: str
+) -> Optional[pd.DataFrame]:
+    cleaned = _pivot_without_avg(pivot)
+    if cleaned.empty:
+        return None
+    best_away = cleaned.idxmin(axis=1).astype(int)
+    df = best_away.reset_index()
+    df.columns = [
+        f"{home_label} rotation",
+        f"Best {away_label} rotation",
+    ]
+    return df
+
+
+def best_home_response_table(
+    pivot: pd.DataFrame, home_label: str, away_label: str
+) -> Optional[pd.DataFrame]:
+    cleaned = _pivot_without_avg(pivot)
+    if cleaned.empty:
+        return None
+    best_home = cleaned.idxmax(axis=0).astype(int)
+    df = best_home.reset_index()
+    df.columns = [
+        f"{away_label} rotation",
+        f"Best {home_label} rotation",
+    ]
+    return df
+
+
 def style_param_table(df: pd.DataFrame):
     if "par_value" not in df.columns:
         return df.style
@@ -578,16 +613,16 @@ def page_rotation_main():
         col_h, col_a = st.columns(2)
 
         serve_to_label = [
-            ("h", f"First serve Home: {home_label}"),
+            ("h", f"First Serve Home: {home_label}"),
             ("a", f"First Serve Away: {away_label}"),
         ]
         for (serve_team, label), col in zip(serve_to_label, (col_h, col_a)):
             with col:
                 st.markdown(f"**{label}**")
                 st.caption(
-            f"Rows: starting rotation of {home_label}; columns: starting rotation "
-            f"of {away_label}"
-        )
+                    f"Rows: starting rotation of {home_label}; columns: starting rotation "
+                    f"of {away_label}"
+                )
                 pivot_df = results.get(serve_team, {}).get("pivot")
                 if pivot_df is None:
                     st.info("No data yet.")
@@ -595,6 +630,24 @@ def page_rotation_main():
                 display_pivot = prepare_pivot_for_display(pivot_df, away_label)
                 styled = style_rotation_matrix(display_pivot)
                 show_square_matrix(styled, display_pivot)
+
+                table_left, table_right = st.columns(2)
+
+                best_away = best_away_response_table(pivot_df, home_label, away_label)
+                with table_left:
+                    if best_away is not None:
+                        st.markdown(
+                            f"**For each {home_label} rotation, toughest reply from {away_label}**"
+                        )
+                        st.table(best_away.style.hide(axis="index"))
+
+                best_home = best_home_response_table(pivot_df, home_label, away_label)
+                with table_right:
+                    if best_home is not None:
+                        st.markdown(
+                            f"**For each {away_label} rotation, best answer from {home_label}**"
+                        )
+                        st.table(best_home.style.hide(axis="index"))
 
         with st.expander("All results (including 0 rows/cols)"):
             col_h_table, col_a_table = st.columns(2)
