@@ -608,7 +608,6 @@ def page_rotation_main():
 
         st.subheader(f"Probability of Home team {home_label} winning")
         
-
         results = st.session_state["last_rotation_results"]
         col_h, col_a = st.columns(2)
 
@@ -618,7 +617,7 @@ def page_rotation_main():
         ]
         for (serve_team, label), col in zip(serve_to_label, (col_h, col_a)):
             with col:
-                st.markdown(f"**{label}**")
+                st.markdown(f"## {label}")
                 st.caption(
                     f"Rows: starting rotation of {home_label}; columns: starting rotation "
                     f"of {away_label}"
@@ -639,7 +638,7 @@ def page_rotation_main():
                         st.markdown(
                             f"**For each {home_label} rotation, toughest reply from {away_label}**"
                         )
-                        st.table(best_away.style.hide(axis="index"))
+                        st.table(best_away.style.hide())
 
                 best_home = best_home_response_table(pivot_df, home_label, away_label)
                 with table_right:
@@ -647,7 +646,7 @@ def page_rotation_main():
                         st.markdown(
                             f"**For each {away_label} rotation, best answer from {home_label}**"
                         )
-                        st.table(best_home.style.hide(axis="index"))
+                        st.table(best_home.style.hide())
 
         with st.expander("All results (including 0 rows/cols)"):
             col_h_table, col_a_table = st.columns(2)
