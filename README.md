@@ -30,12 +30,12 @@
 1. Install Python 3.10+ and a recent `pip`.
 2. (Recommended) create a virtual environment and install dependencies:
 
-```powershell
-python -m venv .venv
-.venv\Scripts\activate  # or source .venv/bin/activate on macOS/Linux
-pip install -r requirements.txt
-pip install pymc arviz pytensor datavolley  # optional: needed for analysis.py / load_full_data.py
-```
+    ```powershell
+    python -m venv .venv
+    .venv\Scripts\activate  # or source .venv/bin/activate on macOS/Linux
+    pip install -r requirements.txt
+    pip install pymc arviz pytensor datavolley  # optional: needed for analysis.py / load_full_data.py
+    ```
 
 3. Place your `.dvw` matches under `data/` and follow the workflow below.
 
