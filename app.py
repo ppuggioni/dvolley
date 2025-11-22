@@ -190,15 +190,6 @@ def rotation_simulator_controls_in_sidebar(
     # tiebreak toggle
     st.sidebar.checkbox("Tiebreak", key="tiebreak")
 
-    # first serve
-    st.sidebar.pills(
-        label="First serve",
-        options=["h", "a"],
-        default="h",
-        selection_mode="single",
-        key="first_serve",
-    )
-
     # scores
     c1, c2 = st.sidebar.columns(2)
     with c1:
@@ -476,29 +467,32 @@ def run_simulation_and_store():
     global_df = build_global_df_from_ui()
     team_home_df = build_team_df_from_ui("team_h")
     team_away_df = build_team_df_from_ui("team_a")
-    serve_team = st.session_state.get("first_serve", "h")
     score_team_a = int(st.session_state.get("score_team_a", 0))
     score_team_b = int(st.session_state.get("score_team_b", 0))
     is_tiebreak = bool(st.session_state.get("tiebreak", False))
 
-    df_res_all, pivot = compute_rotation_probability_matrix(
-        global_df,
-        team_home_df,
-        team_away_df,
-        serve_team,
-        score_team_a,
-        score_team_b,
-        is_tiebreak,
-    )
+    results = {}
+    for serve_team in ("h", "a"):
+        df_res_all, pivot = compute_rotation_probability_matrix(
+            global_df,
+            team_home_df,
+            team_away_df,
+            serve_team,
+            score_team_a,
+            score_team_b,
+            is_tiebreak,
+        )
+        results[serve_team] = {
+            "df": df_res_all,
+            "pivot": pivot,
+        }
 
-    st.session_state["last_rotation_df"] = df_res_all
-    st.session_state["last_rotation_pivot"] = pivot
+    st.session_state["last_rotation_results"] = results
     st.session_state["last_rotation_global_df"] = global_df
     st.session_state["last_rotation_team_home_df"] = team_home_df
     st.session_state["last_rotation_team_away_df"] = team_away_df
     st.session_state["last_rotation_score_team_a"] = score_team_a
     st.session_state["last_rotation_score_team_b"] = score_team_b
-    st.session_state["last_rotation_serve_team"] = serve_team
     st.session_state["last_rotation_is_tiebreak"] = is_tiebreak
 
 
@@ -553,14 +547,39 @@ def page_rotation_main():
 
     st.title("Rotation simulator")
 
-    if "last_rotation_pivot" in st.session_state:
+    if "last_rotation_results" in st.session_state:
         st.subheader("rotation_probability_matrix (home rows, away cols)")
-        pivot_df = st.session_state["last_rotation_pivot"]
-        styled = style_rotation_matrix(pivot_df)
-        show_square_matrix(styled, pivot_df)
+        results = st.session_state["last_rotation_results"]
+
+        col_h, col_a = st.columns(2)
+
+        serve_to_label = [("h", "First serve: home"), ("a", "First serve: away")]
+        for (serve_team, label), col in zip(serve_to_label, (col_h, col_a)):
+            with col:
+                st.markdown(f"**{label}**")
+                pivot_df = results.get(serve_team, {}).get("pivot")
+                if pivot_df is None:
+                    st.info("No data yet.")
+                    continue
+                styled = style_rotation_matrix(pivot_df)
+                show_square_matrix(styled, pivot_df)
 
         with st.expander("All results (including 0 rows/cols)"):
-            st.dataframe(st.session_state["last_rotation_df"])
+            col_h_table, col_a_table = st.columns(2)
+            with col_h_table:
+                st.markdown("**First serve: home**")
+                df_home = results.get("h", {}).get("df")
+                if df_home is None:
+                    st.info("Run the simulator to see data.")
+                else:
+                    st.dataframe(df_home)
+            with col_a_table:
+                st.markdown("**First serve: away**")
+                df_away = results.get("a", {}).get("df")
+                if df_away is None:
+                    st.info("Run the simulator to see data.")
+                else:
+                    st.dataframe(df_away)
 
         with st.expander("Config sent to simulator"):
             st.markdown("**global_df**")
@@ -607,7 +626,7 @@ def page_rotation_main():
                 {
                     "score_team_a": st.session_state.get("last_rotation_score_team_a"),
                     "score_team_b": st.session_state.get("last_rotation_score_team_b"),
-                    "serve_team": st.session_state.get("last_rotation_serve_team"),
+                    "serve_scenarios": ["home first serve", "away first serve"],
                     "tiebreak": st.session_state.get("last_rotation_is_tiebreak"),
                 }
             )
