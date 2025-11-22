@@ -6,6 +6,7 @@ from typing import Optional
 # App configuration / constants
 # ------------------------------------------------------------
 PAGE_ROTATION = "rotation_simulator"
+PAGE_TEAMS_SUMMARY = "teams_summary"
 PAGE_WIP = "work in progress"
 PARAMS_FILE = "./params/params_out_break_sideout.csv"
 
@@ -531,7 +532,7 @@ def prepare_pivot_for_display(pivot: pd.DataFrame, away_label: str) -> pd.DataFr
 
 
 def _pivot_without_avg(pivot: pd.DataFrame) -> pd.DataFrame:
-    return pivot.loc[pivot.index != 0, pivot.columns != 0]
+    return pivot.loc[pivot.index != "AVG", pivot.columns != "AVG"]
 
 
 def best_away_response_table(
@@ -596,32 +597,54 @@ def best_home_response_table(
 
 def style_param_table(df: pd.DataFrame):
     if "par_value" not in df.columns:
-        return df.style
+        # If it's a pivot table, the values are the cells themselves
+        # We can check if it looks like numeric data we want to color
+        pass
+    else:
+        # Original long format
+        return _style_long_param_table(df)
+    
+    # For pivot table (wide format)
+    return _style_wide_param_table(df)
 
+def _style_long_param_table(df: pd.DataFrame):
     def color_val(v):
         try:
             v = float(v)
         except (TypeError, ValueError):
             return ""
-        if v <= -0.5:
-            return "background-color: rgb(255, 0, 0)"
-        if v >= 0.5:
-            return "background-color: rgb(0, 150, 0)"
-
-        if v < 0:
-            t = (v + 0.5) / 0.5
-            r = 255
-            g = int(255 * t)
-            b = int(255 * t)
-        else:
-            t = v / 0.5
-            r = int(255 * (1 - t))
-            g = int(255 - (255 - 150) * t)
-            b = int(255 * (1 - t))
-        return f"background-color: rgb({r},{g},{b})"
+        return _get_color_style(v)
 
     styled = df.style.map(color_val, subset=["par_value"])
     return styled
+
+def _style_wide_param_table(df: pd.DataFrame):
+    def color_val(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return ""
+        return _get_color_style(v)
+    
+    return df.style.map(color_val)
+
+def _get_color_style(v: float) -> str:
+    if v <= -0.5:
+        return "background-color: rgb(255, 0, 0)"
+    if v >= 0.5:
+        return "background-color: rgb(0, 150, 0)"
+
+    if v < 0:
+        t = (v + 0.5) / 0.5
+        r = 255
+        g = int(255 * t)
+        b = int(255 * t)
+    else:
+        t = v / 0.5
+        r = int(255 * (1 - t))
+        g = int(255 - (255 - 150) * t)
+        b = int(255 * (1 - t))
+    return f"background-color: rgb({r},{g},{b})"
 
 
 # ------------------------------------------------------------
@@ -754,6 +777,47 @@ def page_rotation_main():
         st.info("Set your parameters and click APPLY to run the rotation grid.")
 
 
+def page_teams_summary():
+    st.title("Teams Summary")
+    
+    df_all = load_params()
+    team_params_df = get_team_params(df_all)
+    
+    # Pivot: rows=team_name, cols=par_name, values=par_value
+    pivot = team_params_df.pivot(
+        index="team_name",
+        columns="par_name",
+        values="par_value"
+    )
+    
+    # Define column order
+    bp_cols = ["breakpoint_team_adjustment"] + [f"breakpoint_pos_{i}" for i in range(1, 7)]
+    so_cols = ["sideout_team_adjustment"] + [f"sideout_pos_{i}" for i in range(1, 7)]
+    ordered_cols = bp_cols + so_cols
+    
+    # Filter to only existing columns (in case some are missing)
+    existing_cols = [c for c in ordered_cols if c in pivot.columns]
+    pivot = pivot[existing_cols]
+    
+    # Rename columns for compactness
+    rename_map = {
+        "breakpoint_team_adjustment": "BP_team",
+        "sideout_team_adjustment": "SO_team",
+    }
+    for i in range(1, 7):
+        rename_map[f"breakpoint_pos_{i}"] = f"BP_pos{i}"
+        rename_map[f"sideout_pos_{i}"] = f"SO_pos{i}"
+        
+    pivot = pivot.rename(columns=rename_map)
+    
+    # Style and display with 2 decimal formatting
+    st.dataframe(
+        style_param_table(pivot).format("{:.2f}"),
+        width="stretch",
+        height=800,
+    )
+
+
 def wip_page_main():
     st.title("🚧 Work in progress")
     st.write("This page is not ready yet.")
@@ -768,12 +832,14 @@ def main():
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(
         "Select page",
-        options=[PAGE_ROTATION, PAGE_WIP],
+        options=[PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_WIP],
         index=0,
     )
 
     if page == PAGE_ROTATION:
         page_rotation_main()
+    elif page == PAGE_TEAMS_SUMMARY:
+        page_teams_summary()
     else:
         wip_page_main()
 
