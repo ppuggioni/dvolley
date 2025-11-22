@@ -873,7 +873,7 @@ def page_teams_summary():
     # Display in half width
     c1, c2 = st.columns(2)
     with c1:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     
     # Style and display with 2 decimal formatting
     st.dataframe(
