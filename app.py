@@ -471,6 +471,17 @@ def run_simulation_and_store():
     score_team_b = int(st.session_state.get("score_team_b", 0))
     is_tiebreak = bool(st.session_state.get("tiebreak", False))
 
+    home_label = (
+        st.session_state.get("team_h_current_team_name")
+        or st.session_state.get("team_h_current_team_id")
+        or "home team"
+    )
+    away_label = (
+        st.session_state.get("team_a_current_team_name")
+        or st.session_state.get("team_a_current_team_id")
+        or "away team"
+    )
+
     results = {}
     for serve_team in ("h", "a"):
         df_res_all, pivot = compute_rotation_probability_matrix(
@@ -488,6 +499,8 @@ def run_simulation_and_store():
         }
 
     st.session_state["last_rotation_results"] = results
+    st.session_state["last_rotation_team_label_home"] = home_label
+    st.session_state["last_rotation_team_label_away"] = away_label
     st.session_state["last_rotation_global_df"] = global_df
     st.session_state["last_rotation_team_home_df"] = team_home_df
     st.session_state["last_rotation_team_away_df"] = team_away_df
@@ -503,6 +516,13 @@ def show_square_matrix(styled, pivot_df: pd.DataFrame):
     width = n_cols * cell_w
     height = n_rows * cell_h + 40
     st.dataframe(styled, width=width, height=height)
+
+
+def prepare_pivot_for_display(pivot: pd.DataFrame, away_label: str) -> pd.DataFrame:
+    display = pivot.rename(index={0: "AVG"}, columns={0: "AVG"})
+    display.index.name = "-"
+    display.columns.name = f"starting rotation of {away_label}"
+    return display
 
 
 def style_param_table(df: pd.DataFrame):
@@ -548,33 +568,45 @@ def page_rotation_main():
     st.title("Rotation simulator")
 
     if "last_rotation_results" in st.session_state:
-        st.subheader("rotation_probability_matrix (home rows, away cols)")
-        results = st.session_state["last_rotation_results"]
+        home_label = st.session_state.get("last_rotation_team_label_home") or "home team"
+        away_label = st.session_state.get("last_rotation_team_label_away") or "away team"
 
+        st.subheader(f"Probability of Home team {home_label} winning")
+        
+
+        results = st.session_state["last_rotation_results"]
         col_h, col_a = st.columns(2)
 
-        serve_to_label = [("h", "First serve: home"), ("a", "First serve: away")]
+        serve_to_label = [
+            ("h", f"First serve Home: {home_label}"),
+            ("a", f"First Serve Away: {away_label}"),
+        ]
         for (serve_team, label), col in zip(serve_to_label, (col_h, col_a)):
             with col:
                 st.markdown(f"**{label}**")
+                st.caption(
+            f"Rows: starting rotation of {home_label}; columns: starting rotation "
+            f"of {away_label}"
+        )
                 pivot_df = results.get(serve_team, {}).get("pivot")
                 if pivot_df is None:
                     st.info("No data yet.")
                     continue
-                styled = style_rotation_matrix(pivot_df)
-                show_square_matrix(styled, pivot_df)
+                display_pivot = prepare_pivot_for_display(pivot_df, away_label)
+                styled = style_rotation_matrix(display_pivot)
+                show_square_matrix(styled, display_pivot)
 
         with st.expander("All results (including 0 rows/cols)"):
             col_h_table, col_a_table = st.columns(2)
             with col_h_table:
-                st.markdown("**First serve: home**")
+                st.markdown(f"**Home {home_label}**")
                 df_home = results.get("h", {}).get("df")
                 if df_home is None:
                     st.info("Run the simulator to see data.")
                 else:
                     st.dataframe(df_home)
             with col_a_table:
-                st.markdown("**First serve: away**")
+                st.markdown(f"**Away {away_label}**")
                 df_away = results.get("a", {}).get("df")
                 if df_away is None:
                     st.info("Run the simulator to see data.")
@@ -624,6 +656,8 @@ def page_rotation_main():
             st.markdown("**start scores / serve / tiebreak**")
             st.write(
                 {
+                    "home team": home_label,
+                    "away team": away_label,
                     "score_team_a": st.session_state.get("last_rotation_score_team_a"),
                     "score_team_b": st.session_state.get("last_rotation_score_team_b"),
                     "serve_scenarios": ["home first serve", "away first serve"],
