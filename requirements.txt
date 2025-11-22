@@ -3,3 +3,5 @@ pandas
 numpy
 openvolley-pydatavolley
 scikit-learn
+plotly
+pyarrow

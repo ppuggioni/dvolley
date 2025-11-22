@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from typing import Optional
 
 # ------------------------------------------------------------
@@ -818,11 +819,67 @@ def page_teams_summary():
             
     pivot.columns = pd.MultiIndex.from_tuples(new_columns)
     
+    # ------------------------------------------------------------------
+    # Scatterplot
+    # ------------------------------------------------------------------
+    # Prepare data for plot (flatten MultiIndex)
+    plot_df = pivot.copy()
+    # Flatten columns: ("Breakpoint", "Team") -> "Breakpoint_Team"
+    plot_df.columns = [f"{c[0]}_{c[1]}" for c in plot_df.columns]
+    plot_df = plot_df.reset_index() # make team_name a column
+    
+    # Create scatterplot
+    hover_cols = [c for c in plot_df.columns if "Pos" in c]
+    # Format hover data to 2 decimal places
+    hover_data_dict = {c: ":.2f" for c in hover_cols}
+    hover_data_dict["Breakpoint_Team"] = ":.2f"
+    hover_data_dict["Sideout_Team"] = ":.2f"
+
+    fig = px.scatter(
+        plot_df,
+        x="Breakpoint_Team",
+        y="Sideout_Team",
+        hover_name="team_name",
+        hover_data=hover_data_dict,
+        title="Team Breakpoint vs Sideout Strength",
+        width=600,
+        height=600,
+        labels={
+            "Breakpoint_Team": "Breakpoint Strength (Team)",
+            "Sideout_Team": "Sideout Strength (Team)"
+        }
+    )
+    
+    # Enforce square aspect ratio and ensure grid is visible
+    fig.update_yaxes(
+        scaleanchor="x",
+        scaleratio=1,
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='LightGrey',
+        dtick=0.1,
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='LightGrey',
+        dtick=0.1,
+    )
+    
+    # Add a zero line for reference
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    fig.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.5)
+    
+    # Display in half width
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(fig, use_container_width=True)
+    
     # Style and display with 2 decimal formatting
     st.dataframe(
         style_param_table(pivot).format("{:.2f}"),
         width="stretch",
-        height=800,
+        height=500,
     )
 
 
