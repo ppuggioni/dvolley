@@ -6,7 +6,7 @@ import pandas as pd
 # ------------------------------------------------------------
 PAGE_ROTATION = "rotation_simulator"
 PAGE_WIP = "work in progress"
-PARAMS_FILE = "./params_out_break_sideout.csv"
+PARAMS_FILE = "./params/params_out_break_sideout.csv"
 
 POSITIONS = range(1, 7)
 SLIDER_MIN = -2.0

@@ -458,7 +458,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
 # example usage
 if __name__ == "__main__":
     m = VolleyballBreakpointSideoutRegModelNoHome()
-    m.load_data("clean_data_2.csv")  # put your csv here
+    m.load_data("./clean_data/clean_data.csv")  # put your csv here
     m.fit()
-    params_df = m.viz_parameters(save_path="params_out_break_sideout.csv")
+    params_df = m.viz_parameters(save_path="./params/params_out_break_sideout.csv")
     print(params_df.head(40))
