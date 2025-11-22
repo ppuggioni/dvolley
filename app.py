@@ -521,6 +521,10 @@ def show_square_matrix(styled, pivot_df: pd.DataFrame):
 
 def prepare_pivot_for_display(pivot: pd.DataFrame, away_label: str) -> pd.DataFrame:
     display = pivot.rename(index={0: "AVG"}, columns={0: "AVG"})
+    # Ensure all index/column labels are strings to avoid PyArrow mixed-type error
+    display.index = display.index.astype(str)
+    display.columns = display.columns.astype(str)
+
     display.index.name = "-"
     display.columns.name = f"starting rotation of {away_label}"
     return display
