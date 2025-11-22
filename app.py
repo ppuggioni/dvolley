@@ -538,11 +538,17 @@ def best_away_response_table(
         return None
 
     def get_best_2(row):
-        best_2 = row.nsmallest(2).index.astype(int).tolist()
+        best_2 = row.nsmallest(2)
         if len(best_2) > 1:
-            return f"{best_2[0]}, {best_2[1]}"
+            rot1 = best_2.index[0]
+            prob1 = best_2.iloc[0]
+            rot2 = best_2.index[1]
+            prob2 = best_2.iloc[1]
+            return f"{rot1} ({prob1:.1%}), {rot2} ({prob2:.1%})"
         elif len(best_2) == 1:
-            return str(best_2[0])
+            rot1 = best_2.index[0]
+            prob1 = best_2.iloc[0]
+            return f"{rot1} ({prob1:.1%})"
         return ""
 
     best_away_series = cleaned.apply(get_best_2, axis=1)
@@ -562,11 +568,17 @@ def best_home_response_table(
         return None
 
     def get_best_2(col):
-        best_2 = col.nlargest(2).index.astype(int).tolist()
+        best_2 = col.nlargest(2)
         if len(best_2) > 1:
-            return f"{best_2[0]}, {best_2[1]}"
+            rot1 = best_2.index[0]
+            prob1 = best_2.iloc[0]
+            rot2 = best_2.index[1]
+            prob2 = best_2.iloc[1]
+            return f"{rot1} ({prob1:.1%}), {rot2} ({prob2:.1%})"
         elif len(best_2) == 1:
-            return str(best_2[0])
+            rot1 = best_2.index[0]
+            prob1 = best_2.iloc[0]
+            return f"{rot1} ({prob1:.1%})"
         return ""
 
     best_home_series = cleaned.apply(get_best_2, axis=0)
