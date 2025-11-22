@@ -25,27 +25,17 @@ import re
 import pandas as pd
 
 
-def dvw_rallies_to_df(path: str) -> pd.DataFrame:
-    """
-    Read a Data Volley DVW-like text file (CP1252) and return 1 row per rally.
+import streamlit as st
+from gdrive_utils import list_files_in_folder, read_file_content
 
-    Output columns:
-        match_type, match_date,
-        team_id_h, team_id_a, team_h, team_a,
-        set_number,
-        pre_set_won_h, pre_set_won_a,
-        pre_point_won_h, pre_point_won_a,
-        p_h, p_a,
-        post_set_won_h, post_set_won_a,
-        post_point_won_h, post_point_won_a,
-        point_won_h, point_won_a, point_won_team,
-        serve_h, serve_a, serve_team
+def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
+    """
+    Read a Data Volley DVW-like text file content (already decoded) and return 1 row per rally.
     """
     # -------------------------------------------------------------------------
-    # 1) read file
+    # 1) read file content
     # -------------------------------------------------------------------------
-    with open(path, "r", encoding="cp1252", errors="ignore") as f:
-        lines = f.read().splitlines()
+    lines = file_content.splitlines()
 
     match_date = None
     match_type = None
@@ -295,24 +285,66 @@ def dvw_rallies_to_df(path: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-
 if __name__ == "__main__":
-
-    input_dir_path = "./data"
+    
     output_path = './clean_data/clean_data.csv'
-
-    # list files in the directory
-    input_file_list = list_files_sorted(input_dir_path)
-    logging.info(input_file_list)
-
     all_data = []
 
-    for i, fn in enumerate(input_file_list):
-        logging.info("Processing file {}: {}/{}".format(fn, i+1, len(input_file_list)))
-        df_temp = dvw_rallies_to_df(fn)
-        all_data.append(df_temp)
+    # Check if GDrive is configured in secrets
+    use_gdrive = False
+    folder_ids = []
+    
+    if "gdrive" in st.secrets:
+        if "folder_ids" in st.secrets["gdrive"]:
+            folder_ids = st.secrets["gdrive"]["folder_ids"]
+            use_gdrive = True
+        elif "folder_id" in st.secrets["gdrive"]:
+            folder_ids = [st.secrets["gdrive"]["folder_id"]]
+            use_gdrive = True
 
-    all_data = pd.concat(all_data)
-    logging.info('Saving file : {}'.format(output_path))
-    all_data.to_csv(output_path, index=False)
-    print(all_data)
+    if use_gdrive:
+        logging.info(f"Using Google Drive folders: {folder_ids}")
+        
+        for folder_id in folder_ids:
+            logging.info(f"Scanning folder ID: {folder_id}")
+            files = list_files_in_folder(folder_id)
+            
+            # Filter for .dvw files
+            dvw_files = [f for f in files if f['name'].lower().endswith('.dvw')]
+            logging.info(f"Found {len(dvw_files)} .dvw files in folder {folder_id} (out of {len(files)} total files).")
+            
+            for i, f in enumerate(dvw_files):
+                logging.info(f"Processing file {f['name']}: {i+1}/{len(dvw_files)}")
+                content = read_file_content(f['id'])
+                df_temp = dvw_rallies_to_df(content)
+                all_data.append(df_temp)
+            
+    else:
+        # Fallback to local
+        input_dir_path = "./data"
+        logging.info(f"Using local folder: {input_dir_path}")
+        
+        if os.path.exists(input_dir_path):
+            input_file_list = list_files_sorted(input_dir_path)
+            # Filter local files as well for consistency, though list_files_sorted might just list everything
+            input_file_list = [f for f in input_file_list if f.lower().endswith('.dvw')]
+            logging.info(f"Found {len(input_file_list)} .dvw files locally.")
+
+            for i, fn in enumerate(input_file_list):
+                logging.info("Processing file {}: {}/{}".format(fn, i+1, len(input_file_list)))
+                with open(fn, "r", encoding="cp1252", errors="ignore") as f:
+                    content = f.read()
+                df_temp = dvw_rallies_to_df(content)
+                all_data.append(df_temp)
+        else:
+            logging.warning(f"Local folder {input_dir_path} does not exist.")
+
+    if all_data:
+        all_data = pd.concat(all_data)
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        logging.info('Saving file : {}'.format(output_path))
+        all_data.to_csv(output_path, index=False)
+        print(all_data)
+    else:
+        logging.warning("No data processed.")

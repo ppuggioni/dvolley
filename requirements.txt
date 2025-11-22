@@ -5,3 +5,5 @@ openvolley-pydatavolley
 scikit-learn
 plotly
 pyarrow
+google-api-python-client
+google-auth
