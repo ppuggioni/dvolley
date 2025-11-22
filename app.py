@@ -536,11 +536,20 @@ def best_away_response_table(
     cleaned = _pivot_without_avg(pivot)
     if cleaned.empty:
         return None
-    best_away = cleaned.idxmin(axis=1).astype(int)
-    df = best_away.reset_index()
+
+    def get_best_2(row):
+        best_2 = row.nsmallest(2).index.astype(int).tolist()
+        if len(best_2) > 1:
+            return f"{best_2[0]}, {best_2[1]}"
+        elif len(best_2) == 1:
+            return str(best_2[0])
+        return ""
+
+    best_away_series = cleaned.apply(get_best_2, axis=1)
+    df = best_away_series.reset_index()
     df.columns = [
         f"{home_label} rotation",
-        f"Best {away_label} rotation",
+        f"Best 2 {away_label} rotations",
     ]
     return df
 
@@ -551,11 +560,20 @@ def best_home_response_table(
     cleaned = _pivot_without_avg(pivot)
     if cleaned.empty:
         return None
-    best_home = cleaned.idxmax(axis=0).astype(int)
-    df = best_home.reset_index()
+
+    def get_best_2(col):
+        best_2 = col.nlargest(2).index.astype(int).tolist()
+        if len(best_2) > 1:
+            return f"{best_2[0]}, {best_2[1]}"
+        elif len(best_2) == 1:
+            return str(best_2[0])
+        return ""
+
+    best_home_series = cleaned.apply(get_best_2, axis=0)
+    df = best_home_series.reset_index()
     df.columns = [
         f"{away_label} rotation",
-        f"Best {home_label} rotation",
+        f"Best 2 {home_label} rotations",
     ]
     return df
 
@@ -600,14 +618,13 @@ def page_rotation_main():
 
     rotation_simulator_controls_in_sidebar(team_params_df, global_breakpoint_default)
 
-    st.title("Rotation simulator")
+    
 
     if "last_rotation_results" in st.session_state:
         home_label = st.session_state.get("last_rotation_team_label_home") or "home team"
         away_label = st.session_state.get("last_rotation_team_label_away") or "away team"
+        st.title(f"Rotation simulator: Probability of Home team {home_label} winning")
 
-        st.subheader(f"Probability of Home team {home_label} winning")
-        
         results = st.session_state["last_rotation_results"]
         col_h, col_a = st.columns(2)
 
@@ -617,7 +634,7 @@ def page_rotation_main():
         ]
         for (serve_team, label), col in zip(serve_to_label, (col_h, col_a)):
             with col:
-                st.markdown(f"## {label}")
+                st.markdown(f"### {label}")
                 st.caption(
                     f"Rows: starting rotation of {home_label}; columns: starting rotation "
                     f"of {away_label}"
@@ -636,7 +653,7 @@ def page_rotation_main():
                 with table_left:
                     if best_away is not None:
                         st.markdown(
-                            f"**For each {home_label} rotation, toughest reply from {away_label}**"
+                            f"**For each {home_label} rotation, 2 toughest replies from {away_label}**"
                         )
                         st.table(best_away.style.hide())
 
@@ -644,7 +661,7 @@ def page_rotation_main():
                 with table_right:
                     if best_home is not None:
                         st.markdown(
-                            f"**For each {away_label} rotation, best answer from {home_label}**"
+                            f"**For each {away_label} rotation, 2 best answers from {home_label}**"
                         )
                         st.table(best_home.style.hide())
 
