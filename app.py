@@ -799,16 +799,24 @@ def page_teams_summary():
     existing_cols = [c for c in ordered_cols if c in pivot.columns]
     pivot = pivot[existing_cols]
     
-    # Rename columns for compactness
-    rename_map = {
-        "breakpoint_team_adjustment": "BP_team",
-        "sideout_team_adjustment": "SO_team",
-    }
-    for i in range(1, 7):
-        rename_map[f"breakpoint_pos_{i}"] = f"BP_pos{i}"
-        rename_map[f"sideout_pos_{i}"] = f"SO_pos{i}"
-        
-    pivot = pivot.rename(columns=rename_map)
+    # Create MultiIndex columns for visual separation
+    new_columns = []
+    for col in pivot.columns:
+        if col == "breakpoint_team_adjustment":
+            new_columns.append(("Breakpoint", "Team"))
+        elif col == "sideout_team_adjustment":
+            new_columns.append(("Sideout", "Team"))
+        elif col.startswith("breakpoint_pos_"):
+            pos = col.split("_")[-1]
+            new_columns.append(("Breakpoint", f"Pos{pos}"))
+        elif col.startswith("sideout_pos_"):
+            pos = col.split("_")[-1]
+            new_columns.append(("Sideout", f"Pos{pos}"))
+        else:
+            # Fallback
+            new_columns.append(("Other", col))
+            
+    pivot.columns = pd.MultiIndex.from_tuples(new_columns)
     
     # Style and display with 2 decimal formatting
     st.dataframe(
