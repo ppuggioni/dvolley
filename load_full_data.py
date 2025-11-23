@@ -238,7 +238,11 @@ def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]
             if parts:
                 # date is usually parts[0], like "08/10/2025"
                 if len(parts) >= 1 and parts[0].strip():
-                    match_date = parts[0].strip()
+                    raw_date = parts[0].strip()
+                    try:
+                        match_date = datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
+                    except ValueError:
+                        match_date = raw_date
 
                 # match type is usually the 5th field (index 4)
                 if len(parts) >= 5 and parts[4].strip():
@@ -254,7 +258,11 @@ def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]
             if line.startswith("GENERATOR-DAY:"):
                 raw = line.split("GENERATOR-DAY:", 1)[1].strip()
                 # DV has "08/10/2025 16:52:35" -> take date part
-                match_date = raw.split()[0]
+                raw_date = raw.split()[0]
+                try:
+                    match_date = datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
+                except ValueError:
+                    match_date = raw_date
                 break
 
     return match_date, match_type
@@ -393,11 +401,38 @@ def concat_align_and_save(dfs: list[pd.DataFrame], output_path: str) -> pd.DataF
     # concat
     final_df = pd.concat(aligned, ignore_index=True)
 
+    # Sort by match_date if available
+    if "match_date" in final_df.columns:
+        final_df = final_df.sort_values(by=["match_date"]).reset_index(drop=True)
+
     # save
     final_df.to_csv(output_path, index=False)
 
     return final_df
 
+
+import tempfile
+
+def process_dv_file_content(file_content: str, file_name: str = "temp.dvw") -> pd.DataFrame:
+    """
+    Process DV file content by writing it to a temporary file and using the existing processing logic.
+    """
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(mode='w+', encoding='cp1252', suffix='.dvw', delete=False) as temp_file:
+        temp_file.write(file_content)
+        temp_path = temp_file.name
+
+    try:
+        # Process the file using the existing function
+        df = process_dv_file(temp_path)
+        # Restore original filename in metadata if needed, though process_dv_file extracts date/type from content
+        return df
+    finally:
+        # Clean up
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -405,14 +440,18 @@ if __name__ == "__main__":
     input_dir_path = "./data"
     output_path = "./clean_full_data.csv"
 
-    files = list_files_sorted(input_dir_path)
-    logging.info("Found %d files", len(files))
+    if os.path.exists(input_dir_path):
+        files = list_files_sorted(input_dir_path)
+        logging.info("Found %d files", len(files))
 
-    per_file_dfs = []
-    for i, fn in enumerate(files):
-        logging.info("Processing file %s (%d/%d)", fn, i + 1, len(files))
-        df_temp = process_dv_file(fn)
-        per_file_dfs.append(df_temp)
+        per_file_dfs = []
+        for i, fn in enumerate(files):
+            logging.info("Processing file %s (%d/%d)", fn, i + 1, len(files))
+            df_temp = process_dv_file(fn)
+            per_file_dfs.append(df_temp)
 
-    final_df = concat_align_and_save(per_file_dfs, output_path)
-    print(final_df)
+        if per_file_dfs:
+            final_df = concat_align_and_save(per_file_dfs, output_path)
+            print(final_df)
+    else:
+        logging.warning(f"Directory {input_dir_path} not found.")

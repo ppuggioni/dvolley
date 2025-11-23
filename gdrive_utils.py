@@ -3,6 +3,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import io
 
+import logging
+
 def get_credentials():
     """
     Get credentials from streamlit secrets.
@@ -18,7 +20,7 @@ def get_credentials():
         )
     else:
         # Fallback or error
-        st.error("No 'gcp_service_account' found in secrets.")
+        logging.error("No 'gcp_service_account' found in secrets.")
         return None
 
 def get_drive_service():

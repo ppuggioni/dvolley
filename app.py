@@ -2,12 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from typing import Optional
+from load_data import load_matches_from_drive
+from load_full_data import process_dv_file_content
+from gdrive_utils import read_file_content
 
 # ------------------------------------------------------------
 # App configuration / constants
 # ------------------------------------------------------------
 PAGE_ROTATION = "rotation_simulator"
 PAGE_TEAMS_SUMMARY = "teams_summary"
+PAGE_LOAD_DATA = "load_data"
 PAGE_WIP = "work in progress"
 PARAMS_FILE = "./params/params_out_break_sideout.csv"
 
@@ -888,16 +892,247 @@ def wip_page_main():
     st.write("This page is not ready yet.")
 
 
+import threading
+
+class BackgroundLoader:
+    def __init__(self):
+        self.data = None
+        self.is_loading = False
+        self.thread = None
+        self.error = None
+        self.progress_text = ""
+
+    def start_loading(self, folder_ids):
+        if not self.is_loading and self.data is None:
+            self.is_loading = True
+            self.progress_text = "Starting load..."
+            self.thread = threading.Thread(target=self._load, args=(folder_ids,))
+            self.thread.start()
+
+    def update_progress(self, current, total, message):
+        self.progress_text = f"{message}"
+
+    def _load(self, folder_ids):
+        try:
+            # We need to ensure we don't access st.secrets directly if it's not thread-safe, 
+            # but usually it is fine. Passing folder_ids explicitly helps.
+            df = load_matches_from_drive(folder_ids, progress_callback=self.update_progress)
+            self.data = df
+        except Exception as e:
+            self.error = str(e)
+        finally:
+            self.is_loading = False
+
+@st.cache_resource
+def get_loader():
+    return BackgroundLoader()
+
+def perform_load_async():
+    """Start async loading if not already started."""
+    loader = get_loader()
+    
+    # If already loaded or loading, do nothing
+    if loader.data is not None or loader.is_loading:
+        return
+
+    # Get config
+    folder_ids = []
+    if "gdrive" in st.secrets:
+        if "folder_ids" in st.secrets["gdrive"]:
+            folder_ids = st.secrets["gdrive"]["folder_ids"]
+        elif "folder_id" in st.secrets["gdrive"]:
+            folder_ids = [st.secrets["gdrive"]["folder_id"]]
+    
+    if folder_ids:
+        loader.start_loading(folder_ids)
+    else:
+        st.error("No Google Drive folder configured in secrets.")
+
+
+def page_load_data():
+    st.title("Load Data from Google Drive")
+    
+    loader = get_loader()
+
+    # Status Indicator
+    if loader.is_loading:
+        st.info(f"⏳ Loading data... {loader.progress_text}")
+        if st.button("Check Status"):
+            st.rerun()
+    elif loader.data is not None:
+        st.success(f"✅ Data loaded ({len(loader.data)} rallies).")
+        st.session_state["loaded_matches_df"] = loader.data
+        
+        # Refresh button
+        if st.button("Refresh Data"):
+            # Reset loader
+            loader.data = None
+            loader.is_loading = False
+            loader.progress_text = ""
+            perform_load_async()
+            st.rerun()
+            
+    elif loader.error:
+        st.error(f"Error loading data: {loader.error}")
+        if st.button("Retry"):
+            loader.error = None
+            perform_load_async()
+            st.rerun()
+    else:
+        st.warning("No data loaded.")
+        if st.button("Start Loading"):
+            perform_load_async()
+            st.rerun()
+
+    # 2. Display Matches (only if data is in session state)
+    if "loaded_matches_df" in st.session_state and st.session_state["loaded_matches_df"] is not None:
+        df = st.session_state["loaded_matches_df"]
+        
+        # Group by match to get summary
+        matches = []
+        for file_id, group in df.groupby("file_id"):
+            # Assuming group is sorted by rally order
+            last_row = group.iloc[-1]
+            first_row = group.iloc[0]
+            
+            match_date = first_row.get("match_date")
+            match_type = first_row.get("match_type")
+            team_home = first_row.get("team_h")
+            team_away = first_row.get("team_a")
+            
+            # Set score
+            sets_h = last_row.get("post_set_won_h")
+            sets_a = last_row.get("post_set_won_a")
+            set_score = f"{sets_h}-{sets_a}"
+            
+            # Set scores detail
+            set_scores_str = []
+            for set_num, set_group in group.groupby("set_number"):
+                last_set_row = set_group.iloc[-1]
+                ph = last_set_row["post_point_won_h"]
+                pa = last_set_row["post_point_won_a"]
+                set_scores_str.append(f"{ph}-{pa}")
+            
+            full_score_str = f"{set_score} ({', '.join(set_scores_str)})"
+            
+            matches.append({
+                "Date": match_date,
+                "Type": match_type,
+                "Home": team_home,
+                "Away": team_away,
+                "Score": full_score_str,
+                "file_id": file_id,
+                "file_name": first_row.get("file_name")
+            })
+            
+        matches_df = pd.DataFrame(matches).sort_values(['Date']).reset_index(drop=True)
+        
+        # Display table
+        st.dataframe(
+            matches_df[["Date", "Type", "Home", "Away", "Score"]],
+            use_container_width=True
+        )
+        
+        st.divider()
+        st.markdown("### Download Data")
+        
+        # 1. Download All
+        if st.button("Download ALL Matches (Merged CSV)"):
+            with st.spinner("Processing ALL matches... this may take a while..."):
+                try:
+                    # We need to process all files. 
+                    # We can iterate over unique file_ids in the dataframe
+                    unique_files = matches_df[["file_id", "file_name"]].drop_duplicates()
+                    
+                    all_full_dfs = []
+                    for _, row in unique_files.iterrows():
+                        content = read_file_content(row['file_id'])
+                        df_full = process_dv_file_content(content, row['file_name'])
+                        all_full_dfs.append(df_full)
+                    
+                    if all_full_dfs:
+                        merged_df = pd.concat(all_full_dfs, ignore_index=True)
+                        if "match_date" in merged_df.columns:
+                            merged_df = merged_df.sort_values(by=["match_date"]).reset_index(drop=True)
+                        csv_all = merged_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Click to Download MERGED CSV",
+                            data=csv_all,
+                            file_name="all_matches_full.csv",
+                            mime="text/csv",
+                            key="dl_all"
+                        )
+                    else:
+                        st.warning("No data to download.")
+                        
+                except Exception as e:
+                    st.error(f"Error processing all files: {e}")
+
+        st.markdown("#### Download Single Match")
+        
+        # Dropdown options
+        # Format: "YYYY-MM-DD | Home vs Away"
+        match_options = {}
+        for _, row in matches_df.iterrows():
+            label = f"{row['Date']} | {row['Home']} vs {row['Away']}"
+            match_options[label] = row['file_id']
+            
+        selected_label = st.selectbox("Select Match", options=list(match_options.keys()))
+        
+        if selected_label:
+            selected_file_id = match_options[selected_label]
+            # Find file name
+            selected_file_name = matches_df[matches_df['file_id'] == selected_file_id].iloc[0]['file_name']
+            
+            btn_key = f"btn_dl_single_{selected_file_id}"
+            
+            if st.button("Prepare CSV for Selected Match", key=btn_key):
+                with st.spinner("Processing match data..."):
+                    try:
+                        content = read_file_content(selected_file_id)
+                        full_df = process_dv_file_content(content, selected_file_name)
+                        csv = full_df.to_csv(index=False).encode('utf-8')
+                        
+                        st.session_state[f"csv_{selected_file_id}"] = csv
+                        # No rerun needed if we just show the button below conditionally, 
+                        # but rerun helps update state cleanly.
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error processing file: {e}")
+            
+            if f"csv_{selected_file_id}" in st.session_state:
+                st.download_button(
+                    label="Download CSV",
+                    data=st.session_state[f"csv_{selected_file_id}"],
+                    file_name=f"{selected_file_name}_full.csv",
+                    mime="text/csv",
+                    key=f"dl_{selected_file_id}"
+                )
+
+
 # ------------------------------------------------------------
 # Entry point
 # ------------------------------------------------------------
 def main():
     st.set_page_config(page_title="Rotation App", layout="wide")
 
+    # Start Async Load
+    perform_load_async()
+    
+    # Check loader status for sidebar notification
+    loader = get_loader()
+    if loader.is_loading:
+        st.sidebar.info(f"⏳ Loading data... {loader.progress_text}")
+    elif loader.data is not None:
+        # Ensure session state is synced
+        if "loaded_matches_df" not in st.session_state:
+            st.session_state["loaded_matches_df"] = loader.data
+        st.sidebar.success(f"✅ Data loaded ({len(loader.data)} rallies)")
+
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(
         "Select page",
-        options=[PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_WIP],
+        options=[PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_LOAD_DATA, PAGE_WIP],
         index=0,
     )
 
@@ -905,6 +1140,8 @@ def main():
         page_rotation_main()
     elif page == PAGE_TEAMS_SUMMARY:
         page_teams_summary()
+    elif page == PAGE_LOAD_DATA:
+        page_load_data()
     else:
         wip_page_main()
 

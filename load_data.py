@@ -69,7 +69,11 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
                 # 3 competition -> Regular Season ...
                 # 4 match type  -> Amichevole
                 if len(parts) > 0:
-                    match_date = parts[0]  # "08/10/2025"
+                    raw_date = parts[0]  # "08/10/2025"
+                    try:
+                        match_date = datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
+                    except ValueError:
+                        match_date = raw_date
                 if len(parts) > 4:
                     match_type = parts[4]  # "Amichevole"
             i = j  # continue from here
@@ -245,6 +249,7 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
             "serve_h": serve_h,
             "serve_a": serve_a,
             "serve_team": serving_team,
+            "rally_idx": len(rows),
         }
         rows.append(row)
         last_rally_idx = len(rows) - 1
@@ -285,11 +290,98 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_matches_from_drive(folder_ids: list[str], progress_callback=None) -> pd.DataFrame:
+    """
+    Load all .dvw files from the specified Google Drive folders.
+    Returns a concatenated DataFrame of all rallies.
+    
+    progress_callback: function(current, total, message)
+    """
+    all_data = []
+    
+    logging.info(f"Using Google Drive folders: {folder_ids}")
+    
+    # 1. Collect all files first
+    all_dvw_files = []
+    for folder_id in folder_ids:
+        logging.info(f"Scanning folder ID: {folder_id}")
+        try:
+            files = list_files_in_folder(folder_id)
+            dvw_files = [f for f in files if f['name'].lower().endswith('.dvw')]
+            logging.info(f"Found {len(dvw_files)} .dvw files in folder {folder_id}.")
+            all_dvw_files.extend(dvw_files)
+        except Exception as e:
+            logging.error(f"Error scanning folder {folder_id}: {e}")
+
+    total_files = len(all_dvw_files)
+    logging.info(f"Total .dvw files to process: {total_files}")
+
+    # 2. Process files
+    for i, f in enumerate(all_dvw_files):
+        msg = f"Processing {f['name']} ({i+1}/{total_files})"
+        logging.info(msg)
+        
+        if progress_callback:
+            progress_callback(i+1, total_files, msg)
+
+        try:
+            content = read_file_content(f['id'])
+            df_temp = dvw_rallies_to_df(content)
+            # Add file metadata
+            df_temp['file_id'] = f['id']
+            df_temp['file_name'] = f['name']
+            all_data.append(df_temp)
+        except Exception as e:
+            logging.error(f"Error processing file {f['name']}: {e}")
+        
+    if all_data:
+        all_data = pd.concat(all_data, ignore_index=True)
+        # Sort by match_date, then file_id (to keep matches together), then rally_idx (to keep rallies in order)
+        all_data = all_data.sort_values(by=['match_date', 'file_id', 'rally_idx']).reset_index(drop=True)
+        return all_data
+
+
+    return pd.DataFrame()
+
+def load_matches_from_local(input_dir_path: str) -> pd.DataFrame:
+    """
+    Load all .dvw files from the specified local directory.
+    Returns a concatenated DataFrame of all rallies.
+    """
+    all_data = []
+    logging.info(f"Using local folder: {input_dir_path}")
+    
+    if os.path.exists(input_dir_path):
+        input_file_list = list_files_sorted(input_dir_path)
+        input_file_list = [f for f in input_file_list if f.lower().endswith('.dvw')]
+        logging.info(f"Found {len(input_file_list)} .dvw files locally.")
+
+        for i, fn in enumerate(input_file_list):
+            logging.info("Processing file {}: {}/{}".format(fn, i+1, len(input_file_list)))
+            try:
+                with open(fn, "r", encoding="cp1252", errors="ignore") as f:
+                    content = f.read()
+                df_temp = dvw_rallies_to_df(content)
+                # Add file metadata (using path as ID for local)
+                df_temp['file_id'] = fn
+                df_temp['file_name'] = os.path.basename(fn)
+                all_data.append(df_temp)
+            except Exception as e:
+                logging.error(f"Error processing file {fn}: {e}")
+    else:
+        logging.warning(f"Local folder {input_dir_path} does not exist.")
+        
+    if all_data:
+        all_data = pd.concat(all_data, ignore_index=True)
+        all_data = all_data.sort_values(by=['match_date', 'file_id', 'rally_idx']).reset_index(drop=True)
+        return all_data
+    return pd.DataFrame()
+
+
 if __name__ == "__main__":
     
     output_path = './clean_data/clean_data.csv'
-    all_data = []
-
+    
     # Check if GDrive is configured in secrets
     use_gdrive = False
     folder_ids = []
@@ -303,44 +395,11 @@ if __name__ == "__main__":
             use_gdrive = True
 
     if use_gdrive:
-        logging.info(f"Using Google Drive folders: {folder_ids}")
-        
-        for folder_id in folder_ids:
-            logging.info(f"Scanning folder ID: {folder_id}")
-            files = list_files_in_folder(folder_id)
-            
-            # Filter for .dvw files
-            dvw_files = [f for f in files if f['name'].lower().endswith('.dvw')]
-            logging.info(f"Found {len(dvw_files)} .dvw files in folder {folder_id} (out of {len(files)} total files).")
-            
-            for i, f in enumerate(dvw_files):
-                logging.info(f"Processing file {f['name']}: {i+1}/{len(dvw_files)}")
-                content = read_file_content(f['id'])
-                df_temp = dvw_rallies_to_df(content)
-                all_data.append(df_temp)
-            
+        all_data = load_matches_from_drive(folder_ids)
     else:
-        # Fallback to local
-        input_dir_path = "./data"
-        logging.info(f"Using local folder: {input_dir_path}")
-        
-        if os.path.exists(input_dir_path):
-            input_file_list = list_files_sorted(input_dir_path)
-            # Filter local files as well for consistency, though list_files_sorted might just list everything
-            input_file_list = [f for f in input_file_list if f.lower().endswith('.dvw')]
-            logging.info(f"Found {len(input_file_list)} .dvw files locally.")
+        all_data = load_matches_from_local("./data")
 
-            for i, fn in enumerate(input_file_list):
-                logging.info("Processing file {}: {}/{}".format(fn, i+1, len(input_file_list)))
-                with open(fn, "r", encoding="cp1252", errors="ignore") as f:
-                    content = f.read()
-                df_temp = dvw_rallies_to_df(content)
-                all_data.append(df_temp)
-        else:
-            logging.warning(f"Local folder {input_dir_path} does not exist.")
-
-    if all_data:
-        all_data = pd.concat(all_data)
+    if not all_data.empty:
         # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         logging.info('Saving file : {}'.format(output_path))
