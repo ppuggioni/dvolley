@@ -85,7 +85,7 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
                 home_line = lines[i + 1].strip()
                 home_parts = [p.strip() for p in home_line.split(";")]
                 if len(home_parts) >= 2:
-                    team_id_h = home_parts[0]
+                    team_id_h = str(home_parts[0])  # Always string
                     team_h = home_parts[1]
             if i + 2 < n:
                 away_line = lines[i + 2].strip()
@@ -93,7 +93,7 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
                 if not away_line.startswith("["):
                     away_parts = [p.strip() for p in away_line.split(";")]
                     if len(away_parts) >= 2:
-                        team_id_a = away_parts[0]
+                        team_id_a = str(away_parts[0])  # Always string
                         team_a = away_parts[1]
             # skip ahead
             i += 2

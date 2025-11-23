@@ -5,6 +5,7 @@ from typing import Optional
 from load_data import load_matches_from_drive
 from load_full_data import process_dv_file_content
 from gdrive_utils import read_file_content, read_file_bytes
+from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
 
 import logging
 
@@ -34,9 +35,13 @@ SLIDER_STEP = 0.01
 # ------------------------------------------------------------
 # Load CSV once
 # ------------------------------------------------------------
-@st.cache_data
 def load_params(path: str = PARAMS_FILE) -> pd.DataFrame:
-    """Load the whole params file (global + team)."""
+    """Load the whole params file (global + team). Checks session state for refitted params first."""
+    # Check if we have refitted params in session state
+    if "fitted_params_df" in st.session_state:
+        return st.session_state["fitted_params_df"]
+    
+    # Otherwise load from CSV
     return pd.read_csv(path, dtype={"team_id": str})
 
 
@@ -51,6 +56,66 @@ def get_global_breakpoint_default(df_all: pd.DataFrame) -> float:
     if len(subset):
         return float(subset.iloc[0]["par_value"])
     return 0.0
+
+
+# ------------------------------------------------------------
+# Model Refitting
+# ------------------------------------------------------------
+def refit_model_on_current_data(rally_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Refit the regression model on the provided rally-level DataFrame.
+    Returns the fitted parameters DataFrame.
+    """
+    # Instantiate the model
+    model = VolleyballBreakpointSideoutRegModelNoHome(
+        half_life_days=90.0,
+        alpha=1e-2,
+        max_iter=5000,
+        random_state=42
+    )
+    
+    # Check required columns
+    required_cols = model.REQUIRED_COLS
+    missing = [c for c in required_cols if c not in rally_df.columns]
+    if missing:
+        raise ValueError(f"Rally data is missing required columns: {missing}")
+    
+    # Filter to rows with required data
+    clean_df = rally_df[required_cols].dropna()
+    
+    # Convert datetime if needed
+    if 'match_date' in clean_df.columns:
+        clean_df = clean_df.copy()
+        clean_df['match_date'] = pd.to_datetime(clean_df['match_date'])
+    
+    # Create a temporary CSV in memory
+    import io
+    csv_buffer = io.StringIO()
+    clean_df.to_csv(csv_buffer, index=False)
+    csv_buffer.seek(0)
+    
+    # Load data to model (we'll need to modify model class to accept DataFrame or buffer)
+    # For now, save to temp file
+    import tempfile
+    
+    # Ensure team_id columns are strings
+    for col in ['team_id_h', 'team_id_a']:
+        if col in clean_df.columns:
+            clean_df[col] = clean_df[col].astype(str)
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, encoding='utf-8') as tmp:
+        tmp_path = tmp.name
+        clean_df.to_csv(tmp_path, index=False, encoding='utf-8')
+    
+    try:
+        model.load_data(tmp_path, encoding='utf-8')
+        model.fit()
+        params_df = model.viz_parameters()
+        return params_df
+    finally:
+        import os
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # ------------------------------------------------------------
@@ -1043,6 +1108,38 @@ def page_load_data():
         )
         
         st.divider()
+        
+        # Model Refit Section
+        st.markdown("### Refit Model on Current Data")
+        
+        # Show param status
+        if "fitted_params_df" in st.session_state:
+            st.info("🔧 Currently using **refitted** parameters (from loaded data)")
+        else:
+            st.info("📁 Currently using **default** parameters (from CSV file)")
+        
+        if st.button("Refit Model on Current Data"):
+            with st.spinner("Refitting model... this may take a moment..."):
+                try:
+                    # Refit the model on current data
+                    params_df = refit_model_on_current_data(df)
+                    
+                    # Store in session state
+                    st.session_state["fitted_params_df"] = params_df
+                   
+                    # Success message
+                    num_teams = len(params_df[params_df["par_type"] == "team"]["team_id"].unique())
+                    num_params = len(params_df)
+                    st.success(f"✅ Model refitted successfully!")
+                    st.info(f"Fitted {num_params} parameters for {num_teams} teams using {len(df)} rallies.")
+                    st.info("💡 The rotation simulator now uses the refitted parameters. Navigate to it to see the updated values.")
+                    
+                except Exception as e:
+                    st.error(f"Error refitting model: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+        
+        st.divider()
         st.markdown("### Download Data")
         
         # 1. Download All
@@ -1154,6 +1251,13 @@ def main():
         if "loaded_matches_df" not in st.session_state:
             st.session_state["loaded_matches_df"] = loader.data
         st.sidebar.success(f"✅ Data loaded ({len(loader.data)} rallies)")
+
+    # Show parameter status
+    st.sidebar.divider()
+    if "fitted_params_df" in st.session_state:
+        st.sidebar.success("🔧 Using refitted parameters")
+    else:
+        st.sidebar.info("📁 Using default parameters")
 
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(

@@ -117,7 +117,15 @@ class VolleyballBreakpointSideoutRegModelNoHome:
             encoding=encoding,
             parse_dates=["match_date"],
             dayfirst=True,
+            dtype={"team_id_h": str, "team_id_a": str},  # Ensure team IDs are strings
         )
+        df["match_date"] = pd.to_datetime(df["match_date"])
+        
+        # Double-check team_id columns are strings (in case dtype was ignored)
+        for col in ["team_id_h", "team_id_a"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str)
+
         missing = [c for c in self.REQUIRED_COLS if c not in df.columns]
         if missing:
             raise ValueError(f"Missing columns in input CSV: {missing}")
@@ -374,14 +382,14 @@ class VolleyballBreakpointSideoutRegModelNoHome:
 
         # output team-by-team
         for t in range(T):
-            tid = self.all_team_ids[t]
-            tname = self.team_id_to_name.get(tid, str(tid))
+            tid = str(self.all_team_ids[t])  # Ensure team_id is string
+            tname = self.team_id_to_name.get(self.all_team_ids[t], tid)
 
             # breakpoint team effect
             v_break_team = break_team_vals[t]
             rows.append({
                 "par_type": "team",
-                "team_id": tid,
+                "team_id": tid,  # Already string from above
                 "team_name": tname,
                 "par_name": "breakpoint_team_adjustment",
                 "par_value": v_break_team,
