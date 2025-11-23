@@ -4,7 +4,16 @@ import plotly.express as px
 from typing import Optional
 from load_data import load_matches_from_drive
 from load_full_data import process_dv_file_content
-from gdrive_utils import read_file_content
+from gdrive_utils import read_file_content, read_file_bytes
+
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # ------------------------------------------------------------
 # App configuration / constants
@@ -1030,7 +1039,7 @@ def page_load_data():
         # Display table
         st.dataframe(
             matches_df[["Date", "Type", "Home", "Away", "Score"]],
-            use_container_width=True
+            width="stretch"
         )
         
         st.divider()
@@ -1046,9 +1055,22 @@ def page_load_data():
                     
                     all_full_dfs = []
                     for _, row in unique_files.iterrows():
-                        content = read_file_content(row['file_id'])
-                        df_full = process_dv_file_content(content, row['file_name'])
-                        all_full_dfs.append(df_full)
+                        file_name = row['file_name']
+                        file_id = row['file_id']
+                        logging.info(f"Processing file for download: {file_name} (ID: {file_id})")
+                        
+                        try:
+                            # Use bytes to avoid encoding issues
+                            content = read_file_bytes(file_id)
+                            if content:
+                                df_full = process_dv_file_content(content, file_name)
+                                all_full_dfs.append(df_full)
+                            else:
+                                logging.error(f"Failed to download content for file: {file_name}")
+                        except Exception as e:
+                            logging.error(f"Error processing file {file_name}: {e}")
+                            # Continue to next file instead of failing everything
+                            continue
                     
                     if all_full_dfs:
                         merged_df = pd.concat(all_full_dfs, ignore_index=True)
@@ -1089,14 +1111,18 @@ def page_load_data():
             if st.button("Prepare CSV for Selected Match", key=btn_key):
                 with st.spinner("Processing match data..."):
                     try:
-                        content = read_file_content(selected_file_id)
-                        full_df = process_dv_file_content(content, selected_file_name)
-                        csv = full_df.to_csv(index=False).encode('utf-8')
-                        
-                        st.session_state[f"csv_{selected_file_id}"] = csv
-                        # No rerun needed if we just show the button below conditionally, 
-                        # but rerun helps update state cleanly.
-                        st.rerun()
+                        # Use bytes to avoid encoding issues
+                        content = read_file_bytes(selected_file_id)
+                        if content:
+                            full_df = process_dv_file_content(content, selected_file_name)
+                            csv = full_df.to_csv(index=False).encode('utf-8')
+                            
+                            st.session_state[f"csv_{selected_file_id}"] = csv
+                            # No rerun needed if we just show the button below conditionally, 
+                            # but rerun helps update state cleanly.
+                            st.rerun()
+                        else:
+                            st.error("Failed to download file content.")
                     except Exception as e:
                         st.error(f"Error processing file: {e}")
             

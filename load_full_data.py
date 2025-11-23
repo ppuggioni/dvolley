@@ -202,11 +202,24 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 
+def _try_parse_date(date_string: str) -> str:
+    """
+    Attempt to parse a date string from common formats.
+    Returns the date in YYYY-MM-DD format if successful, otherwise the original string.
+    """
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(date_string, fmt).strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+    return date_string
+
+
 def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Given a Data Volley .dvw-like file, return (match_date_str, match_type_str).
 
-    match_date_str is returned as the original DV string, e.g. "08/10/2025".
+    match_date_str is returned in "YYYY-MM-DD" format if parsable, otherwise as the original string.
     match_type_str is e.g. "Amichevole".
 
     If something is missing, returns None for that part.
@@ -221,32 +234,23 @@ def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]
     match_section_idx = None
     for i, line in enumerate(lines):
         if line.strip().upper() == "[3DATAVOLLEYSCOUT]":
-            # not needed, but we know we're in a DV file
             continue
         if line.strip().upper() == "[3MATCH]":
             match_section_idx = i
             break
 
     if match_section_idx is not None:
-        # take the first non-empty line after [3MATCH]
         for j in range(match_section_idx + 1, len(lines)):
             line = lines[j].strip()
             if not line:
                 continue
-            # this should be the semicolon-separated match line
             parts = line.split(";")
             if parts:
-                # date is usually parts[0], like "08/10/2025"
                 if len(parts) >= 1 and parts[0].strip():
                     raw_date = parts[0].strip()
-                    try:
-                        match_date = datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
-                    except ValueError:
-                        match_date = raw_date
+                    match_date = _try_parse_date(raw_date)
 
-                # match type is usually the 5th field (index 4)
                 if len(parts) >= 5 and parts[4].strip():
-                    # clean control chars, just in case
                     mt = parts[4].strip()
                     mt = re.sub(r"[\x00-\x1f]", "", mt)
                     match_type = mt
@@ -257,12 +261,8 @@ def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]
         for line in lines:
             if line.startswith("GENERATOR-DAY:"):
                 raw = line.split("GENERATOR-DAY:", 1)[1].strip()
-                # DV has "08/10/2025 16:52:35" -> take date part
                 raw_date = raw.split()[0]
-                try:
-                    match_date = datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
-                except ValueError:
-                    match_date = raw_date
+                match_date = _try_parse_date(raw_date)
                 break
 
     return match_date, match_type
@@ -361,8 +361,6 @@ def process_dv_file(path: str) -> pd.DataFrame:
 
     # match-level info
     match_date_str, match_type = extract_match_date_and_type(path)
-    if match_date_str:
-        match_date_str = pd.to_datetime(match_date_str, dayfirst=True).strftime("%Y-%m-%d")
 
     df["match_date"] = match_date_str
     df["match_type"] = match_type
@@ -413,26 +411,78 @@ def concat_align_and_save(dfs: list[pd.DataFrame], output_path: str) -> pd.DataF
 
 import tempfile
 
-def process_dv_file_content(file_content: str, file_name: str = "temp.dvw") -> pd.DataFrame:
+def sanitize_dv_content(content: str) -> str:
     """
-    Process DV file content by writing it to a temporary file and using the existing processing logic.
+    Sanitize DV content to prevent parser crashes.
+    Specifically, comment out scout lines where the code is too short (< 6 chars),
+    which causes IndexError in datavolley.
     """
-    # Create a temporary file
-    with tempfile.NamedTemporaryFile(mode='w+', encoding='cp1252', suffix='.dvw', delete=False) as temp_file:
-        temp_file.write(file_content)
-        temp_path = temp_file.name
+    lines = content.splitlines()
+    sanitized_lines = []
+    in_scout = False
+    
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[3SCOUT]":
+            in_scout = True
+            sanitized_lines.append(line)
+            continue
+            
+        if in_scout:
+            # Check if we hit the next section (sections start with [)
+            if stripped.startswith("["):
+                in_scout = False
+                sanitized_lines.append(line)
+                continue
+                
+            # Process scout line
+            # Format: code;...
+            parts = line.split(";")
+            if parts and parts[0]:
+                code = parts[0].strip()
+                # Check for short codes that are not comments
+                if code and not code.startswith("*") and len(code) < 6:
+                    # Log if possible, but we are in a helper. 
+                    # Just comment it out to be safe.
+                    # logging.warning(f"Sanitizing malformed code: {code}")
+                    sanitized_lines.append("*" + line)
+                else:
+                    sanitized_lines.append(line)
+            else:
+                sanitized_lines.append(line)
+        else:
+            sanitized_lines.append(line)
+            
+    return "\n".join(sanitized_lines)
 
-    try:
-        # Process the file using the existing function
-        df = process_dv_file(temp_path)
-        # Restore original filename in metadata if needed, though process_dv_file extracts date/type from content
-        return df
-    finally:
-        # Clean up
+def process_dv_file_content(file_content: str | bytes, file_name: str = "temp.dvw") -> pd.DataFrame:
+    """
+    Process DV file content by writing it to a temporary file (preserving filename) 
+    and using the existing processing logic.
+    """
+    # Decode bytes if needed for sanitization
+    if isinstance(file_content, bytes):
         try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+            content_str = file_content.decode("cp1252", errors="ignore")
+        except:
+            content_str = file_content.decode("utf-8", errors="ignore")
+    else:
+        content_str = file_content
+
+    # Sanitize content
+    content_str = sanitize_dv_content(content_str)
+
+    # Create a temporary directory so we can use the real filename
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = os.path.join(temp_dir, file_name)
+        
+        # Write content (always as cp1252 for datavolley)
+        with open(temp_path, "w", encoding="cp1252", errors="ignore") as f:
+            f.write(content_str)
+
+        # Process
+        df = process_dv_file(temp_path)
+        return df
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
