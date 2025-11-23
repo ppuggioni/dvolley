@@ -510,9 +510,9 @@ class VolleyballProbabilitySimulator:
 
 # quick manual test
 if __name__ == "__main__":
-    params_path = "params_out_break_sideout.csv"
-    team_h_id = "6727"
-    team_a_id = "6736"
+    params_path = "./params/params_out_break_sideout.csv"
+    team_h_id = "6732"
+    team_a_id = "6728"
 
     all_params = pd.read_csv(params_path, dtype={"team_id": str})
     global_df = all_params[all_params["par_type"] == "global"]
@@ -526,13 +526,13 @@ if __name__ == "__main__":
     base.set_initial_conditions(
         set_won_h=0, set_won_a=0,
         point_won_h=0, point_won_a=0,
-        p_h=6, p_a=5,
-        serve_team="a",
+        p_h=2, p_a=4,
+        serve_team="h",
         current_set=1,
     )
     base.set_end_point(set_n=1, point_n=0)
 
     prob = VolleyballProbabilitySimulator(base)
-    df = prob.run_simulations(n=10000)
+    df = prob.run_simulations(n=1000)
     print("MC home win prob:", prob.home_win_prob())
     print("Analytical home set-win prob:", prob.home_win_analytical_calculations())
