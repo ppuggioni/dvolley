@@ -441,7 +441,11 @@ def sanitize_dv_content(content: str) -> str:
             if parts and parts[0]:
                 code = parts[0].strip()
                 # Check for short codes that are not comments
-                if code and not code.startswith("*") and len(code) < 6:
+                # The parser bug is specifically: if len(code) > 4: access code[5].
+                # This crashes ONLY for len(code) == 5.
+                # Codes with len <= 4 are safe (the if is skipped).
+                # Codes with len >= 6 are safe (code[5] exists).
+                if code and not code.startswith("*") and len(code) == 5:
                     # Log if possible, but we are in a helper. 
                     # Just comment it out to be safe.
                     # logging.warning(f"Sanitizing malformed code: {code}")
