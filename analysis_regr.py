@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import SGDClassifier
+from sklearn.linear_model import LogisticRegression
 from typing import Optional
 
 
@@ -84,7 +84,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         self.emp_sideout_pos = None       # t -> array(6) P(server wins | team t receiving in pos)
 
         # fitted model
-        self.model: Optional[SGDClassifier] = None
+        self.model: Optional[LogisticRegression] = None
 
     # ------------------------------------------------------------------
     # utils
@@ -314,13 +314,20 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         if self.X is None:
             raise RuntimeError("Call load_data(...) first.")
 
-        clf = SGDClassifier(
-            loss="log_loss",
+        # Convert alpha to C (C = 1 / (alpha * n_samples))
+        # SGD minimizes: (1/n) * sum(loss) + alpha * penalty
+        # LogReg minimizes: C * sum(loss) + penalty
+        # So C = 1 / (alpha * n)
+        n_samples = len(self.y)
+        C_val = 1.0 / (self.alpha * n_samples) if self.alpha > 0 else 1e10
+
+        clf = LogisticRegression(
             penalty="l2",
-            alpha=self.alpha,
+            C=C_val,
             max_iter=self.max_iter,
             random_state=self.random_state,
             fit_intercept=True,
+            solver='lbfgs' # Robust solver for small datasets
         )
         clf.fit(self.X, self.y, sample_weight=self.weights)
         self.model = clf
