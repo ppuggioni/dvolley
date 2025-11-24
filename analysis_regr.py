@@ -332,6 +332,62 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         clf.fit(self.X, self.y, sample_weight=self.weights)
         self.model = clf
 
+    def predict_proba(self, df_new):
+        """Predict server win probability for new data.
+        
+        Due to how sideout features are coded, we return class 0 probability.
+        """
+        if self.model is None:
+            raise RuntimeError("Call fit() first.")
+        
+        # Temporarily build X for test data
+        old_df = self.df
+        old_X = self.X
+        old_y = self.y
+        old_server_idx = self.server_idx  
+        old_receiver_idx = self.receiver_idx
+        old_server_pos_idx = self.server_pos_idx
+        old_receiver_pos_idx = self.receiver_pos_idx
+        
+        # Build indices for test data
+        df_new = df_new.copy()
+        for col in ["team_id_h", "team_id_a"]:
+            if col in df_new.columns:
+                df_new[col] = df_new[col].astype(str)
+        
+        self.df = df_new
+        # BUG FIX: Swap server and receiver (they were backwards!)
+        self.server_idx = np.where(
+            df_new["serve_team"] == "h",
+            df_new["team_id_a"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int),  # SWAPPED
+            df_new["team_id_h"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int)   # SWAPPED
+        )
+        self.receiver_idx = np.where(
+            df_new["serve_team"] == "h",
+            df_new["team_id_h"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int),  # SWAPPED
+            df_new["team_id_a"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int)   # SWAPPED
+        )
+        
+        serve_is_home = (df_new["serve_team"] == "h").to_numpy()
+        self.server_pos_idx = np.where(serve_is_home, df_new["p_h"].to_numpy(), df_new["p_a"].to_numpy()).astype(int) - 1
+        self.receiver_pos_idx = np.where(serve_is_home, df_new["p_a"].to_numpy(), df_new["p_h"].to_numpy()).astype(int) - 1
+        
+        # Build X
+        self._build_design_matrix_effects()
+        X_test = self.X
+        
+        # Restore
+        self.df = old_df
+        self.X = old_X
+        self.y = old_y
+        self.server_idx = old_server_idx
+        self.receiver_idx = old_receiver_idx
+        self.server_pos_idx = old_server_pos_idx
+        self.receiver_pos_idx = old_receiver_pos_idx
+        
+        # Return class 1 probability (server wins = y=1)
+        return self.model.predict_proba(X_test)[:, 1]
+
     # ------------------------------------------------------------------
     # viz / export
     # ------------------------------------------------------------------
