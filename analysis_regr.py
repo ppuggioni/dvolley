@@ -48,8 +48,8 @@ class VolleyballBreakpointSideoutRegModelNoHome:
     def __init__(
         self,
         half_life_days: float = 90.0,
-        alpha: float = 1e-2,
-        max_iter: int = 5000,
+        alpha: float = 0.001,
+        max_iter: int = 100000,
         random_state: int = 42,
     ):
         self.half_life_days = half_life_days
@@ -332,10 +332,13 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         clf.fit(self.X, self.y, sample_weight=self.weights)
         self.model = clf
 
-    def predict_proba(self, df_new):
-        """Predict server win probability for new data.
+    def predict_proba_breakpoint(self, df_new):
+        """Predict break point probability for new data.
         
-        Due to how sideout features are coded, we return class 0 probability.
+        Returns P(server wins rally) = P(break point happens).
+        
+        Note: This is NOT the same as P(home wins). The server can be either
+        home or away depending on df_new["serve_team"].
         """
         if self.model is None:
             raise RuntimeError("Call fit() first.")
@@ -356,19 +359,23 @@ class VolleyballBreakpointSideoutRegModelNoHome:
                 df_new[col] = df_new[col].astype(str)
         
         self.df = df_new
-        # BUG FIX: Swap server and receiver (they were backwards!)
+        serve_is_home = (df_new["serve_team"] == "h").to_numpy()
+        
+        # Server = team that is serving
+        # Receiver = team that is receiving
         self.server_idx = np.where(
-            df_new["serve_team"] == "h",
-            df_new["team_id_a"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int),  # SWAPPED
-            df_new["team_id_h"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int)   # SWAPPED
+            serve_is_home,
+            df_new["team_id_h"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int),  # Home serving
+            df_new["team_id_a"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int)   # Away serving
         )
         self.receiver_idx = np.where(
-            df_new["serve_team"] == "h",
-            df_new["team_id_h"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int),  # SWAPPED
-            df_new["team_id_a"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int)   # SWAPPED
+            serve_is_home,
+            df_new["team_id_a"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int),  # Away receiving
+            df_new["team_id_h"].map(self.team_id_to_idx).fillna(-1).to_numpy().astype(int)   # Home receiving
         )
         
-        serve_is_home = (df_new["serve_team"] == "h").to_numpy()
+        # Server position = rotation of serving team
+        # Receiver position = rotation of receiving team
         self.server_pos_idx = np.where(serve_is_home, df_new["p_h"].to_numpy(), df_new["p_a"].to_numpy()).astype(int) - 1
         self.receiver_pos_idx = np.where(serve_is_home, df_new["p_a"].to_numpy(), df_new["p_h"].to_numpy()).astype(int) - 1
         
@@ -385,8 +392,14 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         self.server_pos_idx = old_server_pos_idx
         self.receiver_pos_idx = old_receiver_pos_idx
         
-        # Return class 1 probability (server wins = y=1)
+        # Model was trained with y=1 meaning "server wins" = "break point"
+        # So proba[:, 1] is P(y=1) = P(server wins) = P(break point)
         return self.model.predict_proba(X_test)[:, 1]
+    
+    # Legacy alias
+    def predict_proba(self, df_new):
+        """Alias for predict_proba_breakpoint for backward compatibility."""
+        return self.predict_proba_breakpoint(df_new)
 
     # ------------------------------------------------------------------
     # viz / export
