@@ -48,7 +48,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
     def __init__(
         self,
         half_life_days: float = 90.0,
-        alpha: float = 0.001,
+        alpha: float = 0.01,
         max_iter: int = 100000,
         random_state: int = 42,
     ):
