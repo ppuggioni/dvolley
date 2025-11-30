@@ -954,8 +954,10 @@ def page_teams_summary():
         st.plotly_chart(fig, width="stretch")
     
     # Style and display with 2 decimal formatting
+    styled_pivot = style_param_table(pivot)
+    styled_pivot = styled_pivot.format("{:.2f}")
     st.dataframe(
-        style_param_table(pivot).format("{:.2f}"),
+        styled_pivot,
         width="stretch",
         height=500,
     )

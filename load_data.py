@@ -336,6 +336,38 @@ def load_matches_from_drive(folder_ids: list[str], progress_callback=None) -> pd
         
     if all_data:
         all_data = pd.concat(all_data, ignore_index=True)
+        
+        # ========================================================================
+        # MANUAL FIX / AD-HOC DATA CLEANING
+        # ========================================================================
+        # Issue: "Conad Reggio Emilia" appears with two different team_ids in the data.
+        # This causes duplicate entries in team summary and breaks analysis.
+        # Fix: Map all instances to a single canonical team_id.
+        # TODO: Investigate root cause in data source and fix upstream if possible.
+        # ========================================================================
+        
+        # Identify the team name(s) affected
+        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+        
+        # Find all team_ids associated with this team name
+        affected_home = all_data[all_data["team_h"] == TEAM_NAME_TO_FIX]["team_id_h"].unique()
+        affected_away = all_data[all_data["team_a"] == TEAM_NAME_TO_FIX]["team_id_a"].unique()
+        all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+        
+        if len(all_affected_ids) > 1:
+            # Use the first ID as canonical (or specify explicitly)
+            canonical_id = str(min(all_affected_ids))  # Use minimum for consistency
+            
+            logging.warning(f"⚠️  MANUAL FIX: Team '{TEAM_NAME_TO_FIX}' has multiple IDs: {all_affected_ids}")
+            logging.warning(f"⚠️  Consolidating all to canonical ID: {canonical_id}")
+            
+            # Replace all occurrences in both home and away columns
+            for old_id in all_affected_ids:
+                if old_id != canonical_id:
+                    all_data.loc[all_data["team_id_h"] == old_id, "team_id_h"] = canonical_id
+                    all_data.loc[all_data["team_id_a"] == old_id, "team_id_a"] = canonical_id
+                    logging.info(f"   Replaced team_id {old_id} → {canonical_id}")
+        
         # Sort by match_date, then file_id (to keep matches together), then rally_idx (to keep rallies in order)
         all_data = all_data.sort_values(by=['match_date', 'file_id', 'rally_idx']).reset_index(drop=True)
         return all_data
