@@ -365,7 +365,7 @@ def process_dv_file(path: str) -> pd.DataFrame:
     df["match_date"] = match_date_str
     df["match_type"] = match_type
 
-    # build alternative id
+    # build alternative id (match identifier based on date and team IDs)
     df["match_alternative_id"] = (
         df["match_date"].astype(str)
         + " | "
@@ -399,6 +399,47 @@ def concat_align_and_save(dfs: list[pd.DataFrame], output_path: str) -> pd.DataF
     # concat
     final_df = pd.concat(aligned, ignore_index=True)
 
+    # ========================================================================
+    # MANUAL FIX / AD-HOC DATA CLEANING
+    # ========================================================================
+    # Issue: "Conad Reggio Emilia" appears with two different team_ids in the data.
+    # This causes duplicate entries in team summary and breaks analysis.
+    # Fix: Map all instances to a single canonical team_id.
+    # TODO: Investigate root cause in data source and fix upstream if possible.
+    # ========================================================================
+    
+    # Identify the team name(s) affected
+    TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+    
+    # Find all team_ids associated with this team name
+    affected_home = final_df[final_df["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
+    affected_away = final_df[final_df["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
+    all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+    
+    if len(all_affected_ids) > 1:
+        # Use the first ID as canonical (or specify explicitly)
+        canonical_id = str(min(all_affected_ids))  # Use minimum for consistency
+        
+        logger.warning(f"⚠️  MANUAL FIX: Team '{TEAM_NAME_TO_FIX}' has multiple IDs: {all_affected_ids}")
+        logger.warning(f"⚠️  Consolidating all to canonical ID: {canonical_id}")
+        
+        # Replace all occurrences in both home and away columns
+        for old_id in all_affected_ids:
+            if old_id != canonical_id:
+                final_df.loc[final_df["home_team_id"] == old_id, "home_team_id"] = canonical_id
+                final_df.loc[final_df["visiting_team_id"] == old_id, "visiting_team_id"] = canonical_id
+                logger.info(f"   Replaced team_id {old_id} → {canonical_id}")
+        
+        # Rebuild match_alternative_id after team ID correction
+        if "match_alternative_id" in final_df.columns:
+            final_df["match_alternative_id"] = (
+                final_df["match_date"].astype(str)
+                + " | "
+                + final_df["home_team_id"].astype(str)
+                + " | "
+                + final_df["visiting_team_id"].astype(str)
+            )
+    
     # Sort by match_date if available
     if "match_date" in final_df.columns:
         final_df = final_df.sort_values(by=["match_date"]).reset_index(drop=True)
@@ -492,7 +533,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     input_dir_path = "./data"
-    output_path = "./clean_full_data.csv"
+    output_path = "./clean_data/clean_full_data.csv"
 
     if os.path.exists(input_dir_path):
         files = list_files_sorted(input_dir_path)
@@ -501,8 +542,19 @@ if __name__ == "__main__":
         per_file_dfs = []
         for i, fn in enumerate(files):
             logging.info("Processing file %s (%d/%d)", fn, i + 1, len(files))
-            df_temp = process_dv_file(fn)
-            per_file_dfs.append(df_temp)
+            try:
+                # Read file content
+                with open(fn, "r", encoding="cp1252", errors="ignore") as f:
+                    content = f.read()
+                
+                # Use sanitized processing (same as app.py)
+                file_name = os.path.basename(fn)
+                df_temp = process_dv_file_content(content, file_name)
+                per_file_dfs.append(df_temp)
+            except Exception as e:
+                logging.error(f"Error processing file {fn}: {e}")
+                # Continue to next file instead of crashing entire script
+                continue
 
         if per_file_dfs:
             final_df = concat_align_and_save(per_file_dfs, output_path)

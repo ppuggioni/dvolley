@@ -358,15 +358,24 @@ def load_matches_from_drive(folder_ids: list[str], progress_callback=None) -> pd
             # Use the first ID as canonical (or specify explicitly)
             canonical_id = str(min(all_affected_ids))  # Use minimum for consistency
             
-            logging.warning(f"⚠️  MANUAL FIX: Team '{TEAM_NAME_TO_FIX}' has multiple IDs: {all_affected_ids}")
-            logging.warning(f"⚠️  Consolidating all to canonical ID: {canonical_id}")
+            logging.warning(f"??  MANUAL FIX: Team '{TEAM_NAME_TO_FIX}' has multiple IDs: {all_affected_ids}")
+            logging.warning(f"??  Consolidating all to canonical ID: {canonical_id}")
             
             # Replace all occurrences in both home and away columns
             for old_id in all_affected_ids:
                 if old_id != canonical_id:
                     all_data.loc[all_data["team_id_h"] == old_id, "team_id_h"] = canonical_id
                     all_data.loc[all_data["team_id_a"] == old_id, "team_id_a"] = canonical_id
-                    logging.info(f"   Replaced team_id {old_id} → {canonical_id}")
+                    logging.info(f"   Replaced team_id {old_id} ? {canonical_id}")
+        
+        # Build match_alternative_id after team ID correction
+        all_data["match_alternative_id"] = (
+            all_data["match_date"].astype(str)
+            + " | "
+            + all_data["team_id_h"].astype(str)
+            + " | "
+            + all_data["team_id_a"].astype(str)
+        )
         
         # Sort by match_date, then file_id (to keep matches together), then rally_idx (to keep rallies in order)
         all_data = all_data.sort_values(by=['match_date', 'file_id', 'rally_idx']).reset_index(drop=True)
