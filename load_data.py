@@ -28,6 +28,10 @@ import pandas as pd
 import streamlit as st
 from gdrive_utils import list_files_in_folder, read_file_content
 
+import streamlit as st
+from gdrive_utils import list_files_in_folder, read_file_content
+from db_utils import get_existing_file_ids, upload_rallies, fetch_all_rallies
+
 def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
     """
     Read a Data Volley DVW-like text file content (already decoded) and return 1 row per rally.
@@ -38,7 +42,7 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
     lines = file_content.splitlines()
 
     match_date = None
-    match_type = None
+    match_type = "Unknown" # Default value
     team_id_h = None
     team_h = None
     team_id_a = None
@@ -113,8 +117,8 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
     pts_a = 0
 
     # current setter positions BEFORE the next rally
-    home_setter_pos = None
-    away_setter_pos = None
+    home_setter_pos = 0 # Default to 0
+    away_setter_pos = 0 # Default to 0
 
     # serving team for the upcoming rally
     current_server_team = None  # 'h' or 'a'
@@ -148,8 +152,8 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
             current_set = int(m_endset.group(1)) + 1
             pts_h = 0
             pts_a = 0
-            home_setter_pos = None
-            away_setter_pos = None
+            home_setter_pos = 0
+            away_setter_pos = 0
             current_server_team = None
             last_rally_idx = None
             return
@@ -290,161 +294,168 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def load_matches_from_drive(folder_ids: list[str], progress_callback=None) -> pd.DataFrame:
+def update_database(folder_ids: list[str], progress_callback=None):
     """
-    Load all .dvw files from the specified Google Drive folders.
-    Returns a concatenated DataFrame of all rallies.
-    
-    progress_callback: function(current, total, message)
+    Checks for new files in Google Drive that are not in the Supabase DB,
+    processes them, and uploads the data.
     """
-    all_data = []
+    logging.info("Starting database update...")
     
-    logging.info(f"Using Google Drive folders: {folder_ids}")
+    # 1. Get existing file IDs from DB
+    existing_file_ids = get_existing_file_ids()
+    logging.info(f"Found {len(existing_file_ids)} files already in database.")
     
-    # 1. Collect all files first
+    # 2. List files in GDrive
     all_dvw_files = []
     for folder_id in folder_ids:
-        logging.info(f"Scanning folder ID: {folder_id}")
         try:
             files = list_files_in_folder(folder_id)
             dvw_files = [f for f in files if f['name'].lower().endswith('.dvw')]
-            logging.info(f"Found {len(dvw_files)} .dvw files in folder {folder_id}.")
             all_dvw_files.extend(dvw_files)
         except Exception as e:
             logging.error(f"Error scanning folder {folder_id}: {e}")
+            
+    # 3. Filter for missing files
+    missing_files = [f for f in all_dvw_files if f['id'] not in existing_file_ids]
+    logging.info(f"Found {len(missing_files)} new files to process.")
+    
+    if not missing_files:
+        logging.info("Database is up to date.")
+        return
 
-    total_files = len(all_dvw_files)
-    logging.info(f"Total .dvw files to process: {total_files}")
-
-    # 2. Process files
-    for i, f in enumerate(all_dvw_files):
+    # 4. Process and upload missing files
+    total_files = len(missing_files)
+    for i, f in enumerate(missing_files):
         msg = f"Processing {f['name']} ({i+1}/{total_files})"
         logging.info(msg)
-        
         if progress_callback:
             progress_callback(i+1, total_files, msg)
-
+            
         try:
             content = read_file_content(f['id'])
             df_temp = dvw_rallies_to_df(content)
+            
+            if df_temp.empty:
+                logging.warning(f"No rallies found in {f['name']}")
+                continue
+
             # Add file metadata
             df_temp['file_id'] = f['id']
             df_temp['file_name'] = f['name']
-            all_data.append(df_temp)
+            
+            # --- Apply Manual Fixes (Reggio Emilia) ---
+            TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+            # We need to be careful here. If we process file by file, we might not see all IDs 
+            # to pick a "canonical" one globally. 
+            # However, usually the fix is to map specific known bad IDs to a good one.
+            # Or we can just do a local fix if we see multiple IDs in this single file (unlikely).
+            # The original code scanned ALL data to find the set of IDs.
+            # Here we are processing one file at a time.
+            # If we want to be safe, we might need a hardcoded mapping if we know the IDs.
+            # For now, let's skip the complex dynamic fix and assume the user might run a cleanup later
+            # OR we can try to apply it if we see the name.
+            # 
+            # Let's just proceed with raw data for now, as the dynamic fix requires global context.
+            # Or we can implement a simpler version: if team name is X, force ID to Y?
+            # But we don't know Y without looking at other files.
+            # 
+            # Wait, the user's previous code did:
+            # affected_home = all_data[all_data["team_h"] == TEAM_NAME_TO_FIX]["team_id_h"].unique()
+            # ...
+            # canonical_id = str(min(all_affected_ids))
+            # 
+            # Since we are uploading incrementally, we might introduce inconsistency if we don't fix it.
+            # BUT, if we read from DB later, we can fix it on the full dataset.
+            # 
+            # Let's add the match_alternative_id which is required by the schema.
+            df_temp["match_alternative_id"] = (
+                df_temp["match_date"].astype(str)
+                + " | "
+                + df_temp["team_id_h"].astype(str)
+                + " | "
+                + df_temp["team_id_a"].astype(str)
+            )
+            
+            # Upload to DB
+            upload_rallies(df_temp)
+            logging.info(f"Uploaded {len(df_temp)} rallies for {f['name']}")
+            
         except Exception as e:
-            logging.error(f"Error processing file {f['name']}: {e}")
-        
-    if all_data:
-        all_data = pd.concat(all_data, ignore_index=True)
-        
-        # ========================================================================
-        # MANUAL FIX / AD-HOC DATA CLEANING
-        # ========================================================================
-        # Issue: "Conad Reggio Emilia" appears with two different team_ids in the data.
-        # This causes duplicate entries in team summary and breaks analysis.
-        # Fix: Map all instances to a single canonical team_id.
-        # TODO: Investigate root cause in data source and fix upstream if possible.
-        # ========================================================================
-        
-        # Identify the team name(s) affected
-        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
-        
-        # Find all team_ids associated with this team name
-        affected_home = all_data[all_data["team_h"] == TEAM_NAME_TO_FIX]["team_id_h"].unique()
-        affected_away = all_data[all_data["team_a"] == TEAM_NAME_TO_FIX]["team_id_a"].unique()
-        all_affected_ids = list(set(list(affected_home) + list(affected_away)))
-        
-        if len(all_affected_ids) > 1:
-            # Use the first ID as canonical (or specify explicitly)
-            canonical_id = str(min(all_affected_ids))  # Use minimum for consistency
-            
-            logging.warning(f"??  MANUAL FIX: Team '{TEAM_NAME_TO_FIX}' has multiple IDs: {all_affected_ids}")
-            logging.warning(f"??  Consolidating all to canonical ID: {canonical_id}")
-            
-            # Replace all occurrences in both home and away columns
-            for old_id in all_affected_ids:
-                if old_id != canonical_id:
-                    all_data.loc[all_data["team_id_h"] == old_id, "team_id_h"] = canonical_id
-                    all_data.loc[all_data["team_id_a"] == old_id, "team_id_a"] = canonical_id
-                    logging.info(f"   Replaced team_id {old_id} ? {canonical_id}")
-        
-        # Build match_alternative_id after team ID correction
-        all_data["match_alternative_id"] = (
-            all_data["match_date"].astype(str)
-            + " | "
-            + all_data["team_id_h"].astype(str)
-            + " | "
-            + all_data["team_id_a"].astype(str)
-        )
-        
-        # Sort by match_date, then file_id (to keep matches together), then rally_idx (to keep rallies in order)
-        all_data = all_data.sort_values(by=['match_date', 'file_id', 'rally_idx']).reset_index(drop=True)
-        return all_data
+            logging.error(f"Error processing/uploading file {f['name']}: {e}")
 
-
-    return pd.DataFrame()
-
-def load_matches_from_local(input_dir_path: str) -> pd.DataFrame:
+def load_data_from_db() -> pd.DataFrame:
     """
-    Load all .dvw files from the specified local directory.
-    Returns a concatenated DataFrame of all rallies.
+    Loads the full dataset from Supabase.
     """
-    all_data = []
-    logging.info(f"Using local folder: {input_dir_path}")
+    logging.info("Fetching data from Supabase...")
+    df = fetch_all_rallies()
     
-    if os.path.exists(input_dir_path):
-        input_file_list = list_files_sorted(input_dir_path)
-        input_file_list = [f for f in input_file_list if f.lower().endswith('.dvw')]
-        logging.info(f"Found {len(input_file_list)} .dvw files locally.")
+    if not df.empty:
+        # Sort as requested
+        # We need to ensure columns are correct types
+        # rally_idx is int
+        if 'rally_idx' in df.columns:
+            df['rally_idx'] = pd.to_numeric(df['rally_idx'], errors='coerce').fillna(0).astype(int)
+            
+        sort_cols = ['match_date', 'file_id', 'rally_idx']
+        # Check if cols exist
+        existing_sort_cols = [c for c in sort_cols if c in df.columns]
+        if existing_sort_cols:
+            df = df.sort_values(by=existing_sort_cols).reset_index(drop=True)
+            
+        # Apply the Reggio Emilia fix globally here, after fetching all data
+        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+        if "team_h" in df.columns and "team_a" in df.columns:
+            affected_home = df[df["team_h"] == TEAM_NAME_TO_FIX]["team_id_h"].unique()
+            affected_away = df[df["team_a"] == TEAM_NAME_TO_FIX]["team_id_a"].unique()
+            all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+            
+            if len(all_affected_ids) > 1:
+                canonical_id = str(min(all_affected_ids))
+                logging.warning(f"Applying fix for {TEAM_NAME_TO_FIX}: {all_affected_ids} -> {canonical_id}")
+                for old_id in all_affected_ids:
+                    if old_id != canonical_id:
+                        df.loc[df["team_id_h"] == old_id, "team_id_h"] = canonical_id
+                        df.loc[df["team_id_a"] == old_id, "team_id_a"] = canonical_id
+                        
+                # Re-generate match_alternative_id if needed? 
+                # The DB has the old one. We might want to update it in memory for analysis consistency.
+                df["match_alternative_id"] = (
+                    df["match_date"].astype(str)
+                    + " | "
+                    + df["team_id_h"].astype(str)
+                    + " | "
+                    + df["team_id_a"].astype(str)
+                )
 
-        for i, fn in enumerate(input_file_list):
-            logging.info("Processing file {}: {}/{}".format(fn, i+1, len(input_file_list)))
-            try:
-                with open(fn, "r", encoding="cp1252", errors="ignore") as f:
-                    content = f.read()
-                df_temp = dvw_rallies_to_df(content)
-                # Add file metadata (using path as ID for local)
-                df_temp['file_id'] = fn
-                df_temp['file_name'] = os.path.basename(fn)
-                all_data.append(df_temp)
-            except Exception as e:
-                logging.error(f"Error processing file {fn}: {e}")
-    else:
-        logging.warning(f"Local folder {input_dir_path} does not exist.")
-        
-    if all_data:
-        all_data = pd.concat(all_data, ignore_index=True)
-        all_data = all_data.sort_values(by=['match_date', 'file_id', 'rally_idx']).reset_index(drop=True)
-        return all_data
-    return pd.DataFrame()
-
+    return df
 
 if __name__ == "__main__":
     
     output_path = './clean_data/clean_data.csv'
     
     # Check if GDrive is configured in secrets
-    use_gdrive = False
     folder_ids = []
-    
     if "gdrive" in st.secrets:
         if "folder_ids" in st.secrets["gdrive"]:
             folder_ids = st.secrets["gdrive"]["folder_ids"]
-            use_gdrive = True
         elif "folder_id" in st.secrets["gdrive"]:
             folder_ids = [st.secrets["gdrive"]["folder_id"]]
-            use_gdrive = True
 
-    if use_gdrive:
-        all_data = load_matches_from_drive(folder_ids)
+    if folder_ids:
+        # 1. Update Database with any new files
+        update_database(folder_ids)
+        
+        # 2. Load all data from Database
+        all_data = load_data_from_db()
+        
+        if not all_data.empty:
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            logging.info('Saving file : {}'.format(output_path))
+            all_data.to_csv(output_path, index=False)
+            print(f"Loaded {len(all_data)} rows.")
+        else:
+            logging.warning("No data found in database.")
     else:
-        all_data = load_matches_from_local("./data")
-
-    if not all_data.empty:
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        logging.info('Saving file : {}'.format(output_path))
-        all_data.to_csv(output_path, index=False)
-        print(all_data)
-    else:
-        logging.warning("No data processed.")
+        logging.error("No GDrive folder IDs found in secrets.")
