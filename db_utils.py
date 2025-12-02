@@ -216,3 +216,29 @@ def fetch_all_touches() -> pd.DataFrame:
     except Exception as e:
         logging.error(f"Error fetching touches: {e}")
         return pd.DataFrame()
+
+
+def fetch_touches_by_match_id(match_id: str) -> pd.DataFrame:
+    """
+    Fetches all data for a specific match from the touch_level_data table.
+    """
+    try:
+        all_rows = []
+        start = 0
+        batch_size = 1000
+        
+        while True:
+            response = supabase.table("touch_level_data").select("*").eq("match_alternative_id", match_id).range(start, start + batch_size - 1).execute()
+            rows = response.data
+            if not rows:
+                break
+            all_rows.extend(rows)
+            
+            if len(rows) < batch_size:
+                break
+            start += batch_size
+            
+        return pd.DataFrame(all_rows)
+    except Exception as e:
+        logging.error(f"Error fetching touches for match {match_id}: {e}")
+        return pd.DataFrame()

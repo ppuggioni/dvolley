@@ -531,14 +531,16 @@ def process_dv_file_content(file_content: str | bytes, file_name: str = "temp.dv
 
 import streamlit as st
 from gdrive_utils import list_files_in_folder, read_file_content
-from db_utils import get_existing_match_ids, upload_touches, fetch_all_touches
+from db_utils import get_existing_match_ids, upload_touches, fetch_all_touches, fetch_touches_by_match_id
 
-def update_database_full(folder_ids: list[str], progress_callback=None):
+def update_database_full(folder_ids: list[str], progress_callback=None) -> list[str]:
     """
     Checks for new files in Google Drive that are not in the Supabase DB (touch_level_data),
     processes them, and uploads the data.
+    Returns a list of names of the matches/files that were uploaded.
     """
     logging.info("Starting database update for FULL data...")
+    uploaded_matches = []
     
     # 1. Get existing match IDs from DB
     existing_match_ids = get_existing_match_ids()
@@ -682,12 +684,15 @@ def update_database_full(folder_ids: list[str], progress_callback=None):
             # Upload to DB
             upload_touches(df_temp)
             logging.info(f"Uploaded {len(df_temp)} touches for {f['name']}")
+            uploaded_matches.append(f['name'])
             
             # Add to local cache of existing IDs
             existing_match_ids.add(match_id)
             
         except Exception as e:
             logging.error(f"Error processing/uploading file {f['name']}: {e}")
+            
+    return uploaded_matches
 
 SQL_ORDERED_COLS = [
     "unique_row_id",
@@ -749,6 +754,40 @@ def load_full_data_from_db() -> pd.DataFrame:
         extra_cols = [c for c in df.columns if c not in cols_to_use]
         df = df[cols_to_use + extra_cols]
             
+    return df
+
+def load_match_data_from_db(match_id: str) -> pd.DataFrame:
+    """
+    Loads data for a specific match from Supabase.
+    """
+    logging.info(f"Fetching data for match {match_id} from Supabase...")
+    df = fetch_touches_by_match_id(match_id)
+    
+    if not df.empty:
+        # Apply global fix if needed
+        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+        if "home_team" in df.columns and "visiting_team" in df.columns:
+            affected_home = df[df["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
+            affected_away = df[df["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
+            all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+            
+            if len(all_affected_ids) > 1:
+                canonical_id = str(min(all_affected_ids))
+                for old_id in all_affected_ids:
+                    if old_id != canonical_id:
+                        df.loc[df["home_team_id"] == old_id, "home_team_id"] = canonical_id
+                        df.loc[df["visiting_team_id"] == old_id, "visiting_team_id"] = canonical_id
+        
+        # Sort
+        if "unique_row_id" in df.columns:
+             df = df.sort_values(by=["unique_row_id"]).reset_index(drop=True)
+        elif "rally_number" in df.columns:
+             df = df.sort_values(by=["rally_number"]).reset_index(drop=True)
+
+        # Reorder columns to match SQL table
+        existing_cols = [c for c in SQL_ORDERED_COLS if c in df.columns]
+        df = df[existing_cols]
+        
     return df
 
 if __name__ == "__main__":

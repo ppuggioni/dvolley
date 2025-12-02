@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from typing import Optional
-from load_data import load_matches_from_drive
-from load_full_data import process_dv_file_content
+from load_data import update_database, load_data_from_db
+from load_full_data import process_dv_file_content, update_database_full, load_full_data_from_db, load_match_data_from_db
 from gdrive_utils import read_file_content, read_file_bytes
 from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
 
@@ -978,21 +978,20 @@ class BackgroundLoader:
         self.error = None
         self.progress_text = ""
 
-    def start_loading(self, folder_ids):
+    def start_loading(self):
         if not self.is_loading and self.data is None:
             self.is_loading = True
-            self.progress_text = "Starting load..."
-            self.thread = threading.Thread(target=self._load, args=(folder_ids,))
+            self.progress_text = "Starting load from Database..."
+            self.thread = threading.Thread(target=self._load)
             self.thread.start()
 
     def update_progress(self, current, total, message):
         self.progress_text = f"{message}"
 
-    def _load(self, folder_ids):
+    def _load(self):
         try:
-            # We need to ensure we don't access st.secrets directly if it's not thread-safe, 
-            # but usually it is fine. Passing folder_ids explicitly helps.
-            df = load_matches_from_drive(folder_ids, progress_callback=self.update_progress)
+            # Load directly from DB
+            df = load_data_from_db()
             self.data = df
         except Exception as e:
             self.error = str(e)
@@ -1011,36 +1010,80 @@ def perform_load_async():
     if loader.data is not None or loader.is_loading:
         return
 
-    # Get config
-    folder_ids = []
-    if "gdrive" in st.secrets:
-        if "folder_ids" in st.secrets["gdrive"]:
-            folder_ids = st.secrets["gdrive"]["folder_ids"]
-        elif "folder_id" in st.secrets["gdrive"]:
-            folder_ids = [st.secrets["gdrive"]["folder_id"]]
-    
-    if folder_ids:
-        loader.start_loading(folder_ids)
-    else:
-        st.error("No Google Drive folder configured in secrets.")
+    loader.start_loading()
 
 
 def page_load_data():
-    st.title("Load Data from Google Drive")
+    st.title("Data Management")
     
+    # ----------------------------------------------------------------
+    # 1. Update Database Section
+    # ----------------------------------------------------------------
+    st.markdown("### 1. Update Database from Google Drive")
+    st.info("This will scan the configured Google Drive folders for new `.dvw` files and upload them to the Supabase database.")
+    
+    if st.button("Update Database Now", type="primary"):
+        # Get config
+        folder_ids = []
+        if "gdrive" in st.secrets:
+            if "folder_ids" in st.secrets["gdrive"]:
+                folder_ids = st.secrets["gdrive"]["folder_ids"]
+            elif "folder_id" in st.secrets["gdrive"]:
+                folder_ids = [st.secrets["gdrive"]["folder_id"]]
+        
+        if not folder_ids:
+            st.error("No Google Drive folder configured in secrets.")
+        else:
+            with st.status("Updating Database...", expanded=True) as status:
+                st.write("Checking for new Rally Data...")
+                try:
+                    new_rallies = update_database(folder_ids)
+                    if new_rallies:
+                        st.success(f"Uploaded {len(new_rallies)} new files to Rally Data: {', '.join(new_rallies)}")
+                    else:
+                        st.info("Rally Data is up to date.")
+                except Exception as e:
+                    st.error(f"Error updating Rally Data: {e}")
+                
+                st.write("Checking for new Touch Data...")
+                try:
+                    new_touches = update_database_full(folder_ids)
+                    if new_touches:
+                        st.success(f"Uploaded {len(new_touches)} new matches to Touch Data: {', '.join(new_touches)}")
+                    else:
+                        st.info("Touch Data is up to date.")
+                except Exception as e:
+                    st.error(f"Error updating Touch Data: {e}")
+                    
+                status.update(label="Database Update Complete", state="complete", expanded=False)
+            
+            # Trigger reload of data
+            st.cache_data.clear()
+            # Reset loader to force reload
+            loader = get_loader()
+            loader.data = None
+            perform_load_async()
+
+
+    st.divider()
+
+    # ----------------------------------------------------------------
+    # 2. Load Data Status
+    # ----------------------------------------------------------------
+    st.markdown("### 2. Application Data Status")
     loader = get_loader()
 
     # Status Indicator
     if loader.is_loading:
-        st.info(f"⏳ Loading data... {loader.progress_text}")
+        st.info(f"⏳ Loading data from Database... {loader.progress_text}")
         if st.button("Check Status"):
             st.rerun()
     elif loader.data is not None:
-        st.success(f"✅ Data loaded ({len(loader.data)} rallies).")
+        st.success(f"✅ Data loaded from Database ({len(loader.data)} rallies).")
         st.session_state["loaded_matches_df"] = loader.data
         
         # Refresh button
-        if st.button("Refresh Data"):
+        if st.button("Reload Data from DB"):
             # Reset loader
             loader.data = None
             loader.is_loading = False
@@ -1060,7 +1103,7 @@ def page_load_data():
             perform_load_async()
             st.rerun()
 
-    # 2. Display Matches (only if data is in session state)
+    # 3. Display Matches (only if data is in session state)
     if "loaded_matches_df" in st.session_state and st.session_state["loaded_matches_df"] is not None:
         df = st.session_state["loaded_matches_df"]
         
@@ -1098,7 +1141,8 @@ def page_load_data():
                 "Away": team_away,
                 "Score": full_score_str,
                 "file_id": file_id,
-                "file_name": first_row.get("file_name")
+                "file_name": first_row.get("file_name"),
+                "match_alternative_id": first_row.get("match_alternative_id")
             })
             
         matches_df = pd.DataFrame(matches).sort_values(['Date']).reset_index(drop=True)
@@ -1142,40 +1186,20 @@ def page_load_data():
                     st.code(traceback.format_exc())
         
         st.divider()
-        st.markdown("### Download Data")
+        
+        # ----------------------------------------------------------------
+        # 3. Download Data Section
+        # ----------------------------------------------------------------
+        st.markdown("### 3. Download Data (from Database)")
         
         # 1. Download All
         if st.button("Download ALL Matches (Merged CSV)"):
-            with st.spinner("Processing ALL matches... this may take a while..."):
+            with st.spinner("Fetching ALL matches from Database..."):
                 try:
-                    # We need to process all files. 
-                    # We can iterate over unique file_ids in the dataframe
-                    unique_files = matches_df[["file_id", "file_name"]].drop_duplicates()
+                    full_df = load_full_data_from_db()
                     
-                    all_full_dfs = []
-                    for _, row in unique_files.iterrows():
-                        file_name = row['file_name']
-                        file_id = row['file_id']
-                        logging.info(f"Processing file for download: {file_name} (ID: {file_id})")
-                        
-                        try:
-                            # Use bytes to avoid encoding issues
-                            content = read_file_bytes(file_id)
-                            if content:
-                                df_full = process_dv_file_content(content, file_name)
-                                all_full_dfs.append(df_full)
-                            else:
-                                logging.error(f"Failed to download content for file: {file_name}")
-                        except Exception as e:
-                            logging.error(f"Error processing file {file_name}: {e}")
-                            # Continue to next file instead of failing everything
-                            continue
-                    
-                    if all_full_dfs:
-                        merged_df = pd.concat(all_full_dfs, ignore_index=True)
-                        if "match_date" in merged_df.columns:
-                            merged_df = merged_df.sort_values(by=["match_date"]).reset_index(drop=True)
-                        csv_all = merged_df.to_csv(index=False).encode('utf-8')
+                    if not full_df.empty:
+                        csv_all = full_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             label="Click to Download MERGED CSV",
                             data=csv_all,
@@ -1184,10 +1208,10 @@ def page_load_data():
                             key="dl_all"
                         )
                     else:
-                        st.warning("No data to download.")
+                        st.warning("No data found in database.")
                         
                 except Exception as e:
-                    st.error(f"Error processing all files: {e}")
+                    st.error(f"Error fetching data: {e}")
 
         st.markdown("#### Download Single Match")
         
@@ -1196,43 +1220,41 @@ def page_load_data():
         match_options = {}
         for _, row in matches_df.iterrows():
             label = f"{row['Date']} | {row['Home']} vs {row['Away']}"
-            match_options[label] = row['file_id']
+            # Use match_alternative_id if available, otherwise fallback to file_id (though DB uses match_alternative_id)
+            # Actually, load_full_data_from_db returns everything, we can filter it.
+            # But downloading everything just to filter one match is inefficient if dataset is huge.
+            # However, our fetch_all_touches fetches everything anyway.
+            # Ideally we should have a fetch_match(match_id) function.
+            # For now, we will fetch all and filter.
+            match_id = row.get('match_alternative_id')
+            if match_id:
+                match_options[label] = match_id
             
         selected_label = st.selectbox("Select Match", options=list(match_options.keys()))
         
         if selected_label:
-            selected_file_id = match_options[selected_label]
-            # Find file name
-            selected_file_name = matches_df[matches_df['file_id'] == selected_file_id].iloc[0]['file_name']
+            selected_match_id = match_options[selected_label]
             
-            btn_key = f"btn_dl_single_{selected_file_id}"
-            
-            if st.button("Prepare CSV for Selected Match", key=btn_key):
-                with st.spinner("Processing match data..."):
+            if st.button("Prepare CSV for Selected Match"):
+                with st.spinner("Fetching match data..."):
                     try:
-                        # Use bytes to avoid encoding issues
-                        content = read_file_bytes(selected_file_id)
-                        if content:
-                            full_df = process_dv_file_content(content, selected_file_name)
-                            csv = full_df.to_csv(index=False).encode('utf-8')
-                            
-                            st.session_state[f"csv_{selected_file_id}"] = csv
-                            # No rerun needed if we just show the button below conditionally, 
-                            # but rerun helps update state cleanly.
-                            st.rerun()
+                        # Optimized fetch
+                        match_df = load_match_data_from_db(selected_match_id)
+                        
+                        if not match_df.empty:
+                            csv = match_df.to_csv(index=False).encode('utf-8')
+                            st.download_button(
+                                label="Download CSV",
+                                data=csv,
+                                file_name=f"match_{selected_match_id}.csv",
+                                mime="text/csv",
+                                key=f"dl_single_{selected_match_id}"
+                            )
                         else:
-                            st.error("Failed to download file content.")
+                            st.warning(f"No data found for match ID: {selected_match_id}")
+                            
                     except Exception as e:
-                        st.error(f"Error processing file: {e}")
-            
-            if f"csv_{selected_file_id}" in st.session_state:
-                st.download_button(
-                    label="Download CSV",
-                    data=st.session_state[f"csv_{selected_file_id}"],
-                    file_name=f"{selected_file_name}_full.csv",
-                    mime="text/csv",
-                    key=f"dl_{selected_file_id}"
-                )
+                        st.error(f"Error processing match: {e}")
 
 
 # ------------------------------------------------------------
