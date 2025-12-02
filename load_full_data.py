@@ -265,8 +265,8 @@ def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]
                 match_date = _try_parse_date(raw_date)
                 break
 
-    return match_date, match_type
 
+    return match_date, match_type
 
 
 ORDERED_COLS = [
@@ -529,35 +529,274 @@ def process_dv_file_content(file_content: str | bytes, file_name: str = "temp.dv
         df = process_dv_file(temp_path)
         return df
 
+import streamlit as st
+from gdrive_utils import list_files_in_folder, read_file_content
+from db_utils import get_existing_match_ids, upload_touches, fetch_all_touches
+
+def update_database_full(folder_ids: list[str], progress_callback=None):
+    """
+    Checks for new files in Google Drive that are not in the Supabase DB (touch_level_data),
+    processes them, and uploads the data.
+    """
+    logging.info("Starting database update for FULL data...")
+    
+    # 1. Get existing match IDs from DB
+    existing_match_ids = get_existing_match_ids()
+    logging.info(f"Found {len(existing_match_ids)} matches already in database.")
+    
+    # 2. List files in GDrive
+    all_dvw_files = []
+    for folder_id in folder_ids:
+        try:
+            files = list_files_in_folder(folder_id)
+            dvw_files = [f for f in files if f['name'].lower().endswith('.dvw')]
+            all_dvw_files.extend(dvw_files)
+        except Exception as e:
+            logging.error(f"Error scanning folder {folder_id}: {e}")
+            
+    # 3. Process files and check if they are new
+    # Since we don't have file_id in the DB, we have to process the file to get the match_alternative_id
+    # OR we can try to guess it? No, we must process it.
+    # This is less efficient than file_id check, but necessary given the schema.
+    # Optimization: If we had file_id in DB, we could skip download.
+    # For now, we download and process, then check if match_id exists.
+    
+    total_files = len(all_dvw_files)
+    for i, f in enumerate(all_dvw_files):
+        msg = f"Processing {f['name']} ({i+1}/{total_files})"
+        logging.info(msg)
+        
+        try:
+            content = read_file_content(f['id'])
+            # Process content
+            df_temp = process_dv_file_content(content, f['name'])
+            
+            if df_temp.empty:
+                logging.warning(f"No data found in {f['name']}")
+                continue
+                
+            # Check if this match is already in DB
+            # We assume one file = one match
+            if "match_alternative_id" not in df_temp.columns:
+                logging.warning(f"Missing match_alternative_id in {f['name']}")
+                continue
+                
+            match_id = df_temp["match_alternative_id"].iloc[0]
+            
+            if match_id in existing_match_ids:
+                logging.info(f"Match {match_id} already in DB. Skipping upload.")
+                continue
+            
+            # --- Apply Manual Fixes (Reggio Emilia) ---
+            # Copied from concat_align_and_save logic
+            TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+            if "home_team" in df_temp.columns and "visiting_team" in df_temp.columns:
+                affected_home = df_temp[df_temp["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
+                affected_away = df_temp[df_temp["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
+                all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+                
+                if len(all_affected_ids) > 1:
+                    canonical_id = str(min(all_affected_ids))
+                    logging.warning(f"Applying fix for {TEAM_NAME_TO_FIX}: {all_affected_ids} -> {canonical_id}")
+                    for old_id in all_affected_ids:
+                        if old_id != canonical_id:
+                            df_temp.loc[df_temp["home_team_id"] == old_id, "home_team_id"] = canonical_id
+                            df_temp.loc[df_temp["visiting_team_id"] == old_id, "visiting_team_id"] = canonical_id
+                    
+                    # Rebuild match_alternative_id
+                    df_temp["match_alternative_id"] = (
+                        df_temp["match_date"].astype(str)
+                        + " | "
+                        + df_temp["home_team_id"].astype(str)
+                        + " | "
+                        + df_temp["visiting_team_id"].astype(str)
+                    )
+                    # Update match_id check just in case it changed
+                    match_id = df_temp["match_alternative_id"].iloc[0]
+                    if match_id in existing_match_ids:
+                         logging.info(f"Match {match_id} (after fix) already in DB. Skipping upload.")
+                         continue
+
+            # --- Validate and Fill Missing Values for NOT NULL columns ---
+            # match_id
+            if "match_id" not in df_temp.columns or df_temp["match_id"].isnull().all():
+                # Fallback to match_alternative_id if match_id is missing
+                df_temp["match_id"] = df_temp["match_alternative_id"]
+            else:
+                df_temp["match_id"] = df_temp["match_id"].fillna(df_temp["match_alternative_id"])
+            
+            # match_date
+            if "match_date" not in df_temp.columns:
+                 # Should have been set by process_dv_file, but just in case
+                 df_temp["match_date"] = "1970-01-01"
+            df_temp["match_date"] = df_temp["match_date"].fillna("1970-01-01")
+
+            # set_number
+            if "set_number" not in df_temp.columns:
+                df_temp["set_number"] = 1
+            df_temp["set_number"] = df_temp["set_number"].fillna(1).astype(int)
+
+            # scores
+            for col in ["home_team_score", "visiting_team_score"]:
+                if col not in df_temp.columns:
+                    df_temp[col] = 0
+                df_temp[col] = df_temp[col].fillna(0).astype(int)
+            
+            # rally_number
+            if "rally_number" not in df_temp.columns:
+                df_temp["rally_number"] = 0
+            df_temp["rally_number"] = df_temp["rally_number"].fillna(0).astype(int)
+
+            # possession_number
+            if "possession_number" not in df_temp.columns:
+                df_temp["possession_number"] = 0
+            df_temp["possession_number"] = df_temp["possession_number"].fillna(0).astype(int)
+
+            # team
+            if "team" not in df_temp.columns:
+                df_temp["team"] = "Unknown"
+            df_temp["team"] = df_temp["team"].fillna("Unknown")
+
+            # Ensure match_alternative_id is not null
+            df_temp["match_alternative_id"] = df_temp["match_alternative_id"].fillna("Unknown")
+
+            # --- Explicitly cast Integer columns to Int64 (nullable int) ---
+            # This ensures 12.0 becomes 12, and NaN becomes <NA> (which we handle in db_utils)
+            int_cols = [
+                "set_number", "home_team_score", "visiting_team_score", "rally_number", 
+                "possession_number", "setter_position", "home_setter_position", 
+                "visiting_setter_position", "player_number", "num_players_numeric",
+                "home_p1", "home_p2", "home_p3", "home_p4", "home_p5", "home_p6",
+                "visiting_p1", "visiting_p2", "visiting_p3", "visiting_p4", "visiting_p5", "visiting_p6"
+            ]
+            
+            for col in int_cols:
+                if col in df_temp.columns:
+                    # Coerce to numeric first (handles strings like "12"), then cast to Int64
+                    df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce').astype('Int64')
+
+            # --- Add unique_row_id (0..N) as requested for Primary Key ---
+            df_temp.insert(0, "unique_row_id", range(len(df_temp)))
+            df_temp["unique_row_id"] = df_temp["unique_row_id"].astype('Int64')
+
+            # Upload to DB
+            upload_touches(df_temp)
+            logging.info(f"Uploaded {len(df_temp)} touches for {f['name']}")
+            
+            # Add to local cache of existing IDs
+            existing_match_ids.add(match_id)
+            
+        except Exception as e:
+            logging.error(f"Error processing/uploading file {f['name']}: {e}")
+
+SQL_ORDERED_COLS = [
+    "unique_row_id",
+    "match_id", "match_alternative_id", "match_type", "match_date",
+    "home_team_id", "home_team", "visiting_team_id", "visiting_team",
+    "set_number", "home_team_score", "visiting_team_score", "rally_number",
+    "point_won_by", "serving_team", "receiving_team",
+    "setter_position", "home_setter_position", "visiting_setter_position",
+    "possession_number", "video_time",
+    "code", "custom_code", "point_phase", "attack_phase",
+    "team", "player_id", "player_name", "player_number",
+    "skill", "skill_type", "skill_subtype", "evaluation_code", "attack_code", "set_code", "set_type",
+    "start_zone", "end_zone", "end_subzone", "num_players_numeric",
+    "start_coordinate", "mid_coordinate", "end_coordinate",
+    "start_coordinate_x", "start_coordinate_y", "mid_coordinate_x", "mid_coordinate_y", "end_coordinate_x", "end_coordinate_y",
+    "home_p1", "home_p2", "home_p3", "home_p4", "home_p5", "home_p6",
+    "visiting_p1", "visiting_p2", "visiting_p3", "visiting_p4", "visiting_p5", "visiting_p6",
+    "created_by", "create_datetime"
+]
+
+def load_full_data_from_db() -> pd.DataFrame:
+    """
+    Loads the full dataset from Supabase.
+    """
+    logging.info("Fetching FULL data from Supabase...")
+    df = fetch_all_touches()
+    
+    if not df.empty:
+        # Apply global fix if needed (though we fix on upload, legacy data might need it)
+        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
+        if "home_team" in df.columns and "visiting_team" in df.columns:
+            affected_home = df[df["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
+            affected_away = df[df["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
+            all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+            
+            if len(all_affected_ids) > 1:
+                canonical_id = str(min(all_affected_ids))
+                for old_id in all_affected_ids:
+                    if old_id != canonical_id:
+                        df.loc[df["home_team_id"] == old_id, "home_team_id"] = canonical_id
+                        df.loc[df["visiting_team_id"] == old_id, "visiting_team_id"] = canonical_id
+                
+                df["match_alternative_id"] = (
+                    df["match_date"].astype(str)
+                    + " | "
+                    + df["home_team_id"].astype(str)
+                    + " | "
+                    + df["visiting_team_id"].astype(str)
+                )
+        
+        # Sort
+        if "match_date" in df.columns:
+            df = df.sort_values(by=["match_date"]).reset_index(drop=True)
+            
+        # Reorder columns to match SQL table
+        # Only include columns that exist in the DF (ignore missing ones like created_by if not fetched or not in DF)
+        cols_to_use = [c for c in SQL_ORDERED_COLS if c in df.columns]
+        # Append any extra columns that might be in DF but not in SQL list (just in case)
+        extra_cols = [c for c in df.columns if c not in cols_to_use]
+        df = df[cols_to_use + extra_cols]
+            
+    return df
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    input_dir_path = "./data"
     output_path = "./clean_data/clean_full_data.csv"
 
-    if os.path.exists(input_dir_path):
-        files = list_files_sorted(input_dir_path)
-        logging.info("Found %d files", len(files))
+    # Check if GDrive is configured in secrets
+    folder_ids = []
+    if "gdrive" in st.secrets:
+        if "folder_ids" in st.secrets["gdrive"]:
+            folder_ids = st.secrets["gdrive"]["folder_ids"]
+        elif "folder_id" in st.secrets["gdrive"]:
+            folder_ids = [st.secrets["gdrive"]["folder_id"]]
 
-        per_file_dfs = []
-        for i, fn in enumerate(files):
-            logging.info("Processing file %s (%d/%d)", fn, i + 1, len(files))
-            try:
-                # Read file content
-                with open(fn, "r", encoding="cp1252", errors="ignore") as f:
-                    content = f.read()
-                
-                # Use sanitized processing (same as app.py)
-                file_name = os.path.basename(fn)
-                df_temp = process_dv_file_content(content, file_name)
-                per_file_dfs.append(df_temp)
-            except Exception as e:
-                logging.error(f"Error processing file {fn}: {e}")
-                # Continue to next file instead of crashing entire script
-                continue
-
-        if per_file_dfs:
-            final_df = concat_align_and_save(per_file_dfs, output_path)
-            print(final_df)
+    if folder_ids:
+        # 1. Update Database
+        update_database_full(folder_ids)
+        
+        # 2. Load from Database
+        final_df = load_full_data_from_db()
+        
+        if not final_df.empty:
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            logging.info('Saving file : {}'.format(output_path))
+            final_df.to_csv(output_path, index=False)
+            print(f"Loaded {len(final_df)} rows.")
+        else:
+            logging.warning("No data found in database.")
     else:
-        logging.warning(f"Directory {input_dir_path} not found.")
+        # Fallback to local if no secrets (or for testing)
+        logging.warning("No GDrive secrets found. Using local ./data folder.")
+        input_dir_path = "./data"
+        if os.path.exists(input_dir_path):
+            files = list_files_sorted(input_dir_path)
+            per_file_dfs = []
+            for i, fn in enumerate(files):
+                logging.info("Processing file %s (%d/%d)", fn, i + 1, len(files))
+                try:
+                    with open(fn, "r", encoding="cp1252", errors="ignore") as f:
+                        content = f.read()
+                    file_name = os.path.basename(fn)
+                    df_temp = process_dv_file_content(content, file_name)
+                    per_file_dfs.append(df_temp)
+                except Exception as e:
+                    logging.error(f"Error processing file {fn}: {e}")
+                    continue
+            if per_file_dfs:
+                final_df = concat_align_and_save(per_file_dfs, output_path)
+                print(final_df)

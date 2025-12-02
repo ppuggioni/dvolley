@@ -80,7 +80,9 @@ def upload_rallies(df: pd.DataFrame):
     # Our `dvw_rallies_to_df` produces most of them.
     # We need to map or ensure they exist.
     
-    records = df.to_dict(orient='records')
+    import numpy as np
+    df_clean = df.replace([np.inf, -np.inf, np.nan], None)
+    records = df_clean.to_dict(orient='records')
     
     # Batch insert to avoid hitting payload limits
     BATCH_SIZE = 1000
@@ -123,4 +125,94 @@ def fetch_all_rallies() -> pd.DataFrame:
         return pd.DataFrame(all_rows)
     except Exception as e:
         logging.error(f"Error fetching rallies: {e}")
+        return pd.DataFrame()
+
+def get_existing_match_ids() -> set:
+    """
+    Queries the DB to get a set of already processed match_alternative_ids from touch_level_data.
+    """
+    try:
+        # We use match_alternative_id as the unique identifier for a match file
+        response = supabase.table("touch_level_data").select("match_alternative_id").execute()
+        
+        if response.data:
+            return set(item['match_alternative_id'] for item in response.data)
+        return set()
+    except Exception as e:
+        logging.error(f"Error fetching existing match IDs: {e}")
+        return set()
+
+def upload_touches(df: pd.DataFrame):
+    """
+    Uploads a DataFrame to the touch_level_data table.
+    """
+    if df.empty:
+        return
+
+    # Convert DataFrame to list of dicts
+    # Handle NaN values: Supabase/Postgres might not like NaN for numeric columns if not nullable, 
+    # or might expect None. Pandas to_dict handles this but we should be careful.
+    # We replace NaN with None for JSON serialization compatibility
+    # Also handle Infinity and pd.NA
+    import numpy as np
+    # Note: pd.NA is not easily replaced by replace() in some pandas versions mixed with numpy types
+    # But we can try. Best way for object/Int64 columns is to use where or fillna before to_dict?
+    # Actually, to_dict handles Int64 pd.NA as None usually.
+    # But let's be safe.
+    df_clean = df.replace([np.inf, -np.inf, np.nan], None)
+    # For Int64 columns with pd.NA, to_dict should produce None. 
+    # But if we have mixed types, we might need more care.
+    # Let's trust to_dict for Int64, but ensure float NaNs are None.
+    records = df_clean.to_dict(orient='records')
+    
+    # Batch insert
+    BATCH_SIZE = 1000
+    total_records = len(records)
+    
+    for i in range(0, total_records, BATCH_SIZE):
+        batch = records[i:i+BATCH_SIZE]
+        try:
+            # Use upsert to handle potential duplicates (e.g. re-running script)
+            supabase.table("touch_level_data").upsert(batch).execute()
+            logging.info(f"Uploaded batch {i} to {i+len(batch)} (touches)")
+        except Exception as e:
+            # Try to get more details if it's a Supabase/PostgREST error
+            error_details = str(e)
+            if hasattr(e, 'message'):
+                error_details += f" | Message: {e.message}"
+            if hasattr(e, 'details'):
+                error_details += f" | Details: {e.details}"
+            if hasattr(e, 'hint'):
+                error_details += f" | Hint: {e.hint}"
+            if hasattr(e, 'code'):
+                error_details += f" | Code: {e.code}"
+                
+            logging.error(f"Error uploading batch {i}: {error_details}")
+            # If we fail, we should probably stop to avoid partial data or spamming logs
+            # But for now let's just log and maybe break?
+            # break
+
+def fetch_all_touches() -> pd.DataFrame:
+    """
+    Fetches all data from the touch_level_data table.
+    """
+    try:
+        all_rows = []
+        start = 0
+        batch_size = 1000
+        
+        while True:
+            response = supabase.table("touch_level_data").select("*").range(start, start + batch_size - 1).execute()
+            rows = response.data
+            if not rows:
+                break
+            all_rows.extend(rows)
+            
+            if len(rows) < batch_size:
+                break
+            start += batch_size
+            
+        return pd.DataFrame(all_rows)
+    except Exception as e:
+        logging.error(f"Error fetching touches: {e}")
         return pd.DataFrame()
