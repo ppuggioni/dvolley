@@ -531,7 +531,7 @@ def process_dv_file_content(file_content: str | bytes, file_name: str = "temp.dv
 
 import streamlit as st
 from gdrive_utils import list_files_in_folder, read_file_content
-from db_utils import get_existing_match_ids, upload_touches, fetch_all_touches, fetch_touches_by_match_id
+from db_utils import get_existing_match_ids, get_existing_file_ids_from_touches, upload_touches, fetch_all_touches, fetch_touches_by_match_id
 
 def update_database_full(folder_ids: list[str], progress_callback=None) -> list[str]:
     """
@@ -542,9 +542,9 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
     logging.info("Starting database update for FULL data...")
     uploaded_matches = []
     
-    # 1. Get existing match IDs from DB
-    existing_match_ids = get_existing_match_ids()
-    logging.info(f"Found {len(existing_match_ids)} matches already in database.")
+    # 1. Get existing file IDs from DB
+    existing_file_ids = get_existing_file_ids_from_touches()
+    logging.info(f"Found {len(existing_file_ids)} files already in database.")
     
     # 2. List files in GDrive
     all_dvw_files = []
@@ -556,17 +556,21 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
         except Exception as e:
             logging.error(f"Error scanning folder {folder_id}: {e}")
             
-    # 3. Process files and check if they are new
-    # Since we don't have file_id in the DB, we have to process the file to get the match_alternative_id
-    # OR we can try to guess it? No, we must process it.
-    # This is less efficient than file_id check, but necessary given the schema.
-    # Optimization: If we had file_id in DB, we could skip download.
-    # For now, we download and process, then check if match_id exists.
+    # 3. Filter for missing files
+    missing_files = [f for f in all_dvw_files if f['id'] not in existing_file_ids]
+    logging.info(f"Found {len(missing_files)} new files to process.")
     
-    total_files = len(all_dvw_files)
-    for i, f in enumerate(all_dvw_files):
+    if not missing_files:
+        logging.info("Database is up to date.")
+        return uploaded_matches
+    
+    # 4. Process and upload missing files
+    total_files = len(missing_files)
+    for i, f in enumerate(missing_files):
         msg = f"Processing {f['name']} ({i+1}/{total_files})"
         logging.info(msg)
+        if progress_callback:
+            progress_callback(i+1, total_files, msg)
         
         try:
             content = read_file_content(f['id'])
@@ -577,17 +581,9 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
                 logging.warning(f"No data found in {f['name']}")
                 continue
                 
-            # Check if this match is already in DB
-            # We assume one file = one match
-            if "match_alternative_id" not in df_temp.columns:
-                logging.warning(f"Missing match_alternative_id in {f['name']}")
-                continue
-                
-            match_id = df_temp["match_alternative_id"].iloc[0]
-            
-            if match_id in existing_match_ids:
-                logging.info(f"Match {match_id} already in DB. Skipping upload.")
-                continue
+            # Add file metadata
+            df_temp['file_id'] = f['id']
+            df_temp['file_name'] = f['name']
             
             # --- Apply Manual Fixes (Reggio Emilia) ---
             # Copied from concat_align_and_save logic
@@ -613,11 +609,6 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
                         + " | "
                         + df_temp["visiting_team_id"].astype(str)
                     )
-                    # Update match_id check just in case it changed
-                    match_id = df_temp["match_alternative_id"].iloc[0]
-                    if match_id in existing_match_ids:
-                         logging.info(f"Match {match_id} (after fix) already in DB. Skipping upload.")
-                         continue
 
             # --- Validate and Fill Missing Values for NOT NULL columns ---
             # match_id
@@ -687,7 +678,7 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
             uploaded_matches.append(f['name'])
             
             # Add to local cache of existing IDs
-            existing_match_ids.add(match_id)
+            existing_file_ids.add(f['id'])
             
         except Exception as e:
             logging.error(f"Error processing/uploading file {f['name']}: {e}")
@@ -710,6 +701,7 @@ SQL_ORDERED_COLS = [
     "start_coordinate_x", "start_coordinate_y", "mid_coordinate_x", "mid_coordinate_y", "end_coordinate_x", "end_coordinate_y",
     "home_p1", "home_p2", "home_p3", "home_p4", "home_p5", "home_p6",
     "visiting_p1", "visiting_p2", "visiting_p3", "visiting_p4", "visiting_p5", "visiting_p6",
+    "file_id", "file_name",
     "created_by", "create_datetime"
 ]
 
@@ -744,8 +736,15 @@ def load_full_data_from_db() -> pd.DataFrame:
                 )
         
         # Sort
-        if "match_date" in df.columns:
-            df = df.sort_values(by=["match_date"]).reset_index(drop=True)
+        # Ensure unique_row_id is int for sorting
+        if 'unique_row_id' in df.columns:
+            df['unique_row_id'] = pd.to_numeric(df['unique_row_id'], errors='coerce').fillna(0).astype(int)
+            
+        sort_cols = ['match_date', 'file_id', 'unique_row_id']
+        # Check if cols exist
+        existing_sort_cols = [c for c in sort_cols if c in df.columns]
+        if existing_sort_cols:
+            df = df.sort_values(by=existing_sort_cols).reset_index(drop=True)
             
         # Reorder columns to match SQL table
         # Only include columns that exist in the DF (ignore missing ones like created_by if not fetched or not in DF)

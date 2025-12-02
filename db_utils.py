@@ -142,6 +142,20 @@ def get_existing_match_ids() -> set:
         logging.error(f"Error fetching existing match IDs: {e}")
         return set()
 
+def get_existing_file_ids_from_touches() -> set:
+    """
+    Queries the DB to get a set of already processed file_ids from touch_level_data.
+    """
+    try:
+        response = supabase.table("touch_level_data").select("file_id").execute()
+        
+        if response.data:
+            return set(item['file_id'] for item in response.data if item.get('file_id'))
+        return set()
+    except Exception as e:
+        logging.error(f"Error fetching existing file IDs from touches: {e}")
+        return set()
+
 def upload_touches(df: pd.DataFrame):
     """
     Uploads a DataFrame to the touch_level_data table.
