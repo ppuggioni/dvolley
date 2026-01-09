@@ -112,7 +112,7 @@ def main():
     print(f"Loaded {len(df)} rows from {csv_path}")
     
     # Prepare data
-    df["match_date"] = pd.to_datetime(df["match_date"])
+    df["match_date"] = pd.to_datetime(df["match_date"], format='mixed', dayfirst=True)
     df = df.sort_values("match_date")
     df["match_id"] = (df["match_date"].astype(str) + "_" + 
                       df["team_id_h"].astype(str) + "_" + 

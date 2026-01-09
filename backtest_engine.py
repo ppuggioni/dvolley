@@ -81,8 +81,7 @@ def run_sequential_backtest(model, df):
     # Let's say we need at least 5 matches to start.
     # Or we can just start from the second match.
     
-    unique_dates = df["match_date"].unique()
-    unique_dates.sort()
+    unique_dates = np.sort(df["match_date"].unique())
     
     y_true_all = []
     y_pred_all = []

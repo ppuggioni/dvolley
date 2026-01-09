@@ -16,12 +16,10 @@ def main():
     # Check 1: Date Parsing
     print("\n## CHECK 1: Date Parsing")
     try:
-        df["match_date"] = pd.to_datetime(df["match_date"], dayfirst=True)
-        print(f"✓ Dates parsed successfully with dayfirst=True")
-    except Exception as e:
-        print(f"✗ Error with dayfirst=True: {e}")
         df["match_date"] = pd.to_datetime(df["match_date"], format='mixed', dayfirst=True)
-        print(f"✓ Dates parsed with format='mixed'")
+        print(f"✓ Dates parsed successfully with format='mixed', dayfirst=True")
+    except Exception as e:
+        print(f"✗ Error parsing dates: {e}")
     
     print(f"Date range: {df['match_date'].min()} to {df['match_date'].max()}")
     print(f"Total rows: {len(df)}")
