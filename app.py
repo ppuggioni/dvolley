@@ -1396,7 +1396,8 @@ def page_model_analysis():
             "empirical_global_only",
             "empirical_team",
             "empirical_team_rotation"
-        ]
+        ],
+        index=2  # Default to alpha=0.01
     )
     
     backtest_choice = st.sidebar.selectbox(
