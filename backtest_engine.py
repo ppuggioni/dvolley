@@ -1,339 +1,214 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.metrics import log_loss, brier_score_loss
-from typing import List, Dict
-import os
-from models import BaseModel
+import io
+import base64
 
-class BackTestEngine:
-    def __init__(self, output_dir="backtest_results"):
-        self.output_dir = output_dir
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            
-    def run_sequential_weekly(self, df: pd.DataFrame, models: List[BaseModel]):
-        """
-        Runs a sequential backtest week by week.
-        """
-        print(f"Starting Sequential Weekly Backtest on {len(df)} rows...")
-        
-        # Ensure date is datetime
-        df = df.copy()
-        df["match_date"] = pd.to_datetime(df["match_date"])
-            
-        # Sort by date
-        df = df.sort_values("match_date")
-        
-        # Add week identifier
-        df["week"] = df["match_date"].dt.to_period("W")
-        unique_weeks = df["week"].unique()
-        unique_weeks = sorted(unique_weeks)
-        
-        print(f"Found {len(unique_weeks)} unique weeks: {unique_weeks}")
-        
-        results = {model.name: {"y_true": [], "y_pred": [], "dates": [], "weeks": []} for model in models}
-        
-        # Iterate through weeks
-        # We start from the 2nd week so we have at least some training data
-        for i, week in enumerate(unique_weeks):
-            if i == 0:
-                print(f"Skipping week {week} (no training data)")
-                continue
-                
-            print(f"Processing week {week}...")
-            
-            # Split data
-            train_mask = df["week"] < week
-            test_mask = df["week"] == week
-            
-            df_train = df[train_mask]
-            df_test = df[test_mask]
-            
-            if len(df_train) == 0:
-                print("  No training data, skipping.")
-                continue
-                
-            if len(df_test) == 0:
-                print("  No test data, skipping.")
-                continue
-                
-            # Calculate y_test for evaluation
-            serve_is_home = (df_test["serve_team"] == "h")
-            y_test = np.where(
-                (serve_is_home & (df_test["point_won_team"] == "h")) |
-                (~serve_is_home & (df_test["point_won_team"] == "a")),
-                1, 0
-            )
-            
-            # Train and Predict for each model
-            for model in models:
-                # Fit on past data
-                model.fit(df_train)
-                
-                # Predict on current week
-                y_prob = model.predict_proba(df_test)
-                
-                # Store results
-                results[model.name]["y_true"].extend(y_test)
-                results[model.name]["y_pred"].extend(y_prob)
-                results[model.name]["dates"].extend(df_test["match_date"])
-                results[model.name]["weeks"].extend([str(week)] * len(y_test))
-                
-        return results
+def calculate_metrics(y_true, y_pred):
+    """Calculate Log Loss, Brier Score, and Accuracy."""
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
     
-    def run_leave_one_match_out(self, df: pd.DataFrame, models: List[BaseModel]):
-        """
-        Leave-One-Match-Out Cross-Validation.
-        For each match, train on all other matches and predict on that match.
-        """
-        print(f"Starting Leave-One-Match-Out CV on {len(df)} rows...")
-        
-        # Ensure date is datetime
-        df = df.copy()
-        df["match_date"] = pd.to_datetime(df["match_date"])
-        df = df.sort_values("match_date")
-        
-        # Identify unique matches by (date, home_team, away_team)
-        df["match_id"] = df["match_date"].astype(str) + "_" + df["team_id_h"].astype(str) + "_" + df["team_id_a"].astype(str)
-        unique_matches = df["match_id"].unique()
-        
-        print(f"Found {len(unique_matches)} unique matches")
-        
-        results = {model.name: {"y_true": [], "y_pred": [], "dates": [], "weeks": []} for model in models}
-        
-        # Iterate through matches
-        for i, match_id in enumerate(unique_matches):
-            if (i + 1) % 5 == 0:
-                print(f"Processing match {i+1}/{len(unique_matches)}...")
-            
-            # Split data
-            train_mask = df["match_id"] != match_id
-            test_mask = df["match_id"] == match_id
-            
-            df_train = df[train_mask]
-            df_test = df[test_mask]
-            
-            if len(df_train) == 0 or len(df_test) == 0:
-                continue
-            
-            # Calculate y_test
-            serve_is_home = (df_test["serve_team"] == "h")
-            y_test = np.where(
-                (serve_is_home & (df_test["point_won_team"] == "h")) |
-                (~serve_is_home & (df_test["point_won_team"] == "a")),
-                1, 0
-            )
-            
-            # Train and Predict for each model
-            for model in models:
-                model.fit(df_train)
-                y_prob = model.predict_proba(df_test)
-                
-                # Store results
-                results[model.name]["y_true"].extend(y_test)
-                results[model.name]["y_pred"].extend(y_prob)
-                results[model.name]["dates"].extend(df_test["match_date"])
-                # For LOOCV, we can still track weeks if needed
-                if "week" in df_test.columns:
-                    results[model.name]["weeks"].extend(df_test["week"].astype(str))
-                else:
-                    results[model.name]["weeks"].extend([str(df_test["match_date"].iloc[0])] * len(y_test))
-                
-        return results
-        
-    def evaluate_results(self, results: Dict):
-        """
-        Calculates metrics and generates plots.
-        """
-        summary = []
-        weekly_metrics = {model: {"weeks": [], "log_loss": [], "accuracy": [], "samples": []} for model in results}
-        
-        for model_name, data in results.items():
-            y_true = np.array(data["y_true"])
-            y_pred = np.array(data["y_pred"])
-            weeks = np.array(data["weeks"])
-            
-            if len(y_true) == 0:
-                print(f"No predictions for {model_name}")
-                continue
-            
-            # Overall Metrics
-            ll = log_loss(y_true, y_pred, labels=[0, 1])
-            bs = brier_score_loss(y_true, y_pred)
-            acc = np.mean((y_pred > 0.5) == y_true)
-            
-            summary.append({
-                "Model": model_name,
-                "Log Loss": ll,
-                "Brier Score": bs,
-                "Accuracy": acc,
-                "Samples": len(y_true)
-            })
-            
-            # Weekly Metrics
-            unique_weeks = sorted(list(set(weeks)))
-            for w in unique_weeks:
-                mask = weeks == w
-                if np.sum(mask) > 0:
-                    w_true = y_true[mask]
-                    w_pred = y_pred[mask]
-                    w_ll = log_loss(w_true, w_pred, labels=[0, 1])
-                    w_acc = np.mean((w_pred > 0.5) == w_true)
-                    
-                    weekly_metrics[model_name]["weeks"].append(w)
-                    weekly_metrics[model_name]["log_loss"].append(w_ll)
-                    weekly_metrics[model_name]["accuracy"].append(w_acc)
-                    weekly_metrics[model_name]["samples"].append(len(w_true))
+    # Clip predictions for log loss stability
+    y_pred_safe = np.clip(y_pred, 1e-15, 1 - 1e-15)
+    
+    ll = log_loss(y_true, y_pred_safe, labels=[0, 1])
+    bs = brier_score_loss(y_true, y_pred)
+    acc = np.mean((y_pred > 0.5) == y_true)
+    
+    return {
+        "Log Loss": ll,
+        "Brier Score": bs,
+        "Accuracy": acc,
+        "Samples": len(y_true)
+    }
 
-            # Plot Calibration (Time-Hue)
-            self.plot_calibration_time_hue(y_true, y_pred, weeks, model_name)
-            
-        summary_df = pd.DataFrame(summary)
-        print("\nBacktest Performance Summary:")
-        print(summary_df.to_string(index=False))
-        
-        # Save summary
-        summary_df.to_csv(os.path.join(self.output_dir, "summary_metrics.csv"), index=False)
-        
-        # Plot Metrics Time Series
-        self.plot_metrics_timeseries(weekly_metrics)
-        
-        # Plot Probability Comparisons
-        self.plot_probability_comparisons(results)
-        
-        return summary_df
+def run_loocv_backtest(model, df):
+    """Run Leave-One-Match-Out Cross Validation."""
+    df = df.copy()
     
-    def plot_probability_comparisons(self, results: Dict):
-        """Create pairplot comparing predictions across models."""
+    # Ensure match_id exists
+    if "match_id" not in df.columns:
+        # Construct match_id if missing (fallback)
+        df["match_id"] = (df["match_date"].astype(str) + "_" + 
+                          df["team_id_h"].astype(str) + "_" + 
+                          df["team_id_a"].astype(str))
         
-        # Build dataframe with all model predictions
-        plot_data = {}
-        y_true = None
+    unique_matches = df["match_id"].unique()
+    y_true_all = []
+    y_pred_all = []
+    
+    for match_id in unique_matches:
+        train_mask = df["match_id"] != match_id
+        test_mask = df["match_id"] == match_id
         
-        for model_name, data in results.items():
-            if len(data["y_true"]) == 0:
-                continue
-            plot_data[model_name] = np.array(data["y_pred"])
-            if y_true is None:
-                y_true = np.array(data["y_true"])
+        df_train = df[train_mask]
+        df_test = df[test_mask]
         
-        # Create dataframe
-        df_plot = pd.DataFrame(plot_data)
-        df_plot["Actual"] = y_true
-        
-        # Pairplot
-        g = sns.pairplot(
-            df_plot,
-            diag_kind="kde",
-            plot_kws={"alpha": 0.3, "s": 10},
-            corner=True
+        if df_test.empty:
+            continue
+            
+        # Calculate y_test
+        serve_is_home = (df_test["serve_team"] == "h")
+        y_test = np.where(
+            (serve_is_home & (df_test["point_won_team"] == "h")) |
+            (~serve_is_home & (df_test["point_won_team"] == "a")),
+            1, 0
         )
-        g.fig.suptitle("Model Prediction Comparisons", y=1.02, fontsize=16)
         
-        plt.savefig(os.path.join(self.output_dir, "prediction_pairplot.png"), 
-                   dpi=150, bbox_inches='tight')
-        plt.close()
+        # Fit and Predict
+        model.fit(df_train)
+        y_prob = model.predict_proba(df_test)
         
-        # Alternative: heatmap of correlations
-        plt.figure(figsize=(10, 8))
-        corr = df_plot.corr()
-        sns.heatmap(corr, annot=True, fmt=".3f", cmap="RdYlGn", center=0.5,
-                   vmin=0, vmax=1, square=True)
-        plt.title("Prediction Correlation Matrix")
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, "prediction_correlations.png"),
-                   dpi=150, bbox_inches='tight')
-        plt.close()
+        y_true_all.extend(y_test)
+        y_pred_all.extend(y_prob)
         
-        print(f"\nPrediction comparison plots saved.")
-        print(f"Correlation with actual outcomes:")
-        for model in plot_data.keys():
-            corr_val = np.corrcoef(plot_data[model], y_true)[0, 1]
-            print(f"  {model}: {corr_val:.4f}")
+    return y_true_all, y_pred_all
 
+def run_sequential_backtest(model, df):
+    """
+    Run Weekly Sequential Backtest.
+    Sorts matches by date.
+    Iterates through weeks (or matches).
+    Trains on all PAST matches, predicts CURRENT match(es).
+    """
+    df = df.copy()
+    df["match_date"] = pd.to_datetime(df["match_date"], format='mixed', dayfirst=True)
+    df = df.sort_values("match_date")
+    
+    # We need a minimum history to start training.
+    # Let's say we need at least 5 matches to start.
+    # Or we can just start from the second match.
+    
+    unique_dates = df["match_date"].unique()
+    unique_dates.sort()
+    
+    y_true_all = []
+    y_pred_all = []
+    
+    # Start from the 5th date to have some training data
+    start_idx = 5
+    if len(unique_dates) <= start_idx:
+        start_idx = 1 # Fallback if very few dates
+        
+    for i in range(start_idx, len(unique_dates)):
+        current_date = unique_dates[i]
+        
+        # Train on all data strictly BEFORE current_date
+        train_mask = df["match_date"] < current_date
+        # Test on data ON current_date
+        test_mask = df["match_date"] == current_date
+        
+        df_train = df[train_mask]
+        df_test = df[test_mask]
+        
+        if df_train.empty or df_test.empty:
+            continue
+            
+        # Calculate y_test
+        serve_is_home = (df_test["serve_team"] == "h")
+        y_test = np.where(
+            (serve_is_home & (df_test["point_won_team"] == "h")) |
+            (~serve_is_home & (df_test["point_won_team"] == "a")),
+            1, 0
+        )
+        
+        # Fit and Predict
+        model.fit(df_train)
+        y_prob = model.predict_proba(df_test)
+        
+        y_true_all.extend(y_test)
+        y_pred_all.extend(y_prob)
+        
+    return y_true_all, y_pred_all
 
-    def plot_metrics_timeseries(self, weekly_metrics):
-        # Plot Log Loss
-        plt.figure(figsize=(12, 6))
-        for model_name, data in weekly_metrics.items():
-            if not data["weeks"]: continue
-            plt.plot(data["weeks"], data["log_loss"], marker='o', label=model_name)
+def plot_calibration(y_true, y_pred, model_name, min_samples_per_bin=400):
+    """
+    Plot calibration curve with uncertainty.
+    Returns the plot as a base64 encoded string (for Streamlit).
+    """
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    # Sort by prediction
+    sorted_indices = np.argsort(y_pred)
+    y_pred_sorted = y_pred[sorted_indices]
+    y_true_sorted = y_true[sorted_indices]
+    
+    n_samples = len(y_pred)
+    if n_samples == 0:
+        return None
         
-        plt.title("Weekly Log Loss (Lower is Better)")
-        plt.xlabel("Week")
-        plt.ylabel("Log Loss")
-        plt.xticks(rotation=45)
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, "timeseries_log_loss.png"))
-        plt.close()
-
-        # Plot Accuracy
-        plt.figure(figsize=(12, 6))
-        for model_name, data in weekly_metrics.items():
-            if not data["weeks"]: continue
-            plt.plot(data["weeks"], data["accuracy"], marker='o', label=model_name)
-            
-        plt.title("Weekly Accuracy (Higher is Better)")
-        plt.xlabel("Week")
-        plt.ylabel("Accuracy")
-        plt.xticks(rotation=45)
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, "timeseries_accuracy.png"))
-        plt.close()
-
-    def plot_calibration_time_hue(self, y_true, y_pred, weeks, model_name):
-        y_true = np.array(y_true)
-        y_pred = np.array(y_pred)
-        weeks = np.array(weeks)
-        unique_weeks = sorted(list(set(weeks)))
+    # Calculate number of bins
+    n_bins = n_samples // min_samples_per_bin
+    if n_bins < 1: n_bins = 1
+    
+    # Calculate base size and remainder
+    base_size = n_samples // n_bins
+    remainder = n_samples % n_bins
+    
+    prob_true = []
+    prob_pred = []
+    bin_counts = []
+    
+    current_idx = 0
+    for i in range(n_bins):
+        extra = 1 if i < remainder else 0
+        bin_size = base_size + extra
+        end_idx = current_idx + bin_size
         
-        # Setup colormap
-        import matplotlib.cm as cm
-        colors = cm.viridis(np.linspace(0, 1, len(unique_weeks)))
+        bin_y_true = y_true_sorted[current_idx:end_idx]
+        bin_y_pred = y_pred_sorted[current_idx:end_idx]
         
-        plt.figure(figsize=(10, 8))
-        plt.plot([0, 1], [0, 1], "k--", label="Perfect", alpha=0.5)
+        prob_true.append(np.mean(bin_y_true))
+        prob_pred.append(np.mean(bin_y_pred))
+        bin_counts.append(len(bin_y_true))
         
-        # Plot each week
-        for i, w in enumerate(unique_weeks):
-            mask = weeks == w
-            if np.sum(mask) < 5: # Skip weeks with too few samples for calibration
-                continue
-                
-            w_true = y_true[mask]
-            w_pred = y_pred[mask]
-            
-            # Simple binning for this week
-            # Since samples per week might be small, we use fewer bins (e.g., 5)
-            bins = np.linspace(0, 1, 6)
-            bin_indices = np.digitize(w_pred, bins)
-            
-            prob_true = []
-            prob_pred = []
-            
-            for b in range(1, len(bins)):
-                b_mask = bin_indices == b
-                if np.any(b_mask):
-                    prob_true.append(np.mean(w_true[b_mask]))
-                    prob_pred.append(np.mean(w_pred[b_mask]))
-            
-            if prob_pred:
-                plt.plot(prob_pred, prob_true, "o-", color=colors[i], label=f"{w}", alpha=0.8)
+        current_idx = end_idx
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+    
+    # Plot range
+    all_values = prob_true + prob_pred
+    if not all_values:
+        plot_min, plot_max = 0, 1
+    else:
+        plot_min = max(0, min(all_values) - 0.05)
+        plot_max = min(1, max(all_values) + 0.05)
+    
+    # Perfect calibration line
+    ax.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Perfect', alpha=0.5)
+    
+    # Calibration curve with CI
+    if prob_pred:
+        p_hat = np.array(prob_true)
+        ns = np.array(bin_counts)
+        p_hat_safe = np.clip(p_hat, 0.01, 0.99)
+        se = np.sqrt(p_hat_safe * (1 - p_hat_safe) / ns)
+        yerr = 1.96 * se
         
-        plt.xlabel("Mean Predicted Probability")
-        plt.ylabel("Fraction of Positives")
-        plt.title(f"Calibration by Week: {model_name}")
-        # Legend might be too big if many weeks, so maybe put outside
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', title="Week")
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
+        ax.errorbar(prob_pred, prob_true, yerr=yerr, fmt='none', 
+                     ecolor='gray', alpha=0.5, capsize=3)
         
-        filename = f"calibration_time_{model_name.replace(' ', '_').replace('=', '').replace('(', '').replace(')', '')}.png"
-        plt.savefig(os.path.join(self.output_dir, filename), dpi=150, bbox_inches='tight')
-        plt.close()
+        ax.scatter(prob_pred, prob_true, s=50, alpha=0.7, label=model_name)
+        ax.plot(prob_pred, prob_true, '-', alpha=0.4, linewidth=1)
+    
+    ax.set_xlabel('Predicted Probability')
+    ax.set_ylabel('Actual Fraction')
+    ax.set_title(f'Calibration: {model_name}')
+    ax.set_xlim(plot_min, plot_max)
+    ax.set_ylim(plot_min, plot_max)
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Save to buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+    plt.close(fig)
+    buf.seek(0)
+    
+    # Encode
+    img_str = base64.b64encode(buf.read()).decode('utf-8')
+    return f"data:image/png;base64,{img_str}"

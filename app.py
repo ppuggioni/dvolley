@@ -1,11 +1,25 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import numpy as np
 from typing import Optional
 from load_data import update_database, load_data_from_db
 from load_full_data import process_dv_file_content, update_database_full, load_full_data_from_db, load_match_data_from_db
 from gdrive_utils import read_file_content, read_file_bytes
 from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
+from simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
+from models import (
+    LogisticRegressionModel, 
+    EmpiricalModel, 
+    SimpleEmpiricalModel, 
+    GlobalMeanModel
+)
+from backtest_engine import (
+    run_loocv_backtest, 
+    run_sequential_backtest, 
+    calculate_metrics, 
+    plot_calibration
+)
 
 import logging
 
@@ -22,6 +36,7 @@ logging.basicConfig(
 PAGE_ROTATION = "rotation_simulator"
 PAGE_TEAMS_SUMMARY = "teams_summary"
 PAGE_LOAD_DATA = "load_data"
+PAGE_MODEL_ANALYSIS = "model_analysis"
 PAGE_WIP = "work in progress"
 PARAMS_FILE = "./params/params_out_break_sideout.csv"
 
@@ -86,7 +101,7 @@ def refit_model_on_current_data(rally_df: pd.DataFrame) -> pd.DataFrame:
     # Convert datetime if needed
     if 'match_date' in clean_df.columns:
         clean_df = clean_df.copy()
-        clean_df['match_date'] = pd.to_datetime(clean_df['match_date'])
+        clean_df['match_date'] = pd.to_datetime(clean_df['match_date'], format='mixed', dayfirst=True)
     
     # Create a temporary CSV in memory
     import io
@@ -259,6 +274,12 @@ def rotation_simulator_controls_in_sidebar(
     Sidebar controls with APPLY at the top.
     """
     st.sidebar.markdown("## Rotation simulator")
+    
+    active_model = st.session_state.get("active_model")
+    if active_model:
+        st.sidebar.success(f"Using Active Model: **{active_model['name']}**")
+        if active_model["type"] == "empirical":
+            st.sidebar.info("Empirical model selected. Parameters are fixed based on historical data.")
 
     # APPLY at the top
     if st.sidebar.button("APPLY", type="primary", width='stretch'):
@@ -289,6 +310,9 @@ def rotation_simulator_controls_in_sidebar(
             value=int(st.session_state.get("score_team_b", 0)),
             key="score_team_b",
         )
+        
+    if active_model and active_model["type"] == "empirical":
+        return
 
     # global breakpoint slider
     slider_sidebar("Global breakpoint", key="global_breakpoint")
@@ -391,6 +415,7 @@ def compute_rotation_probability_matrix(
     score_team_a: int,
     score_team_b: int,
     is_tiebreak: bool,
+    active_model: dict = None,
 ):
     """
     Run the 6x6 grid using ONLY values from the UI.
@@ -402,17 +427,30 @@ def compute_rotation_probability_matrix(
     )
 
     results = []
+    
+    # Get team IDs if using active model
+    team_id_h = None
+    team_id_a = None
+    if active_model:
+        # We need team IDs to look up params in empirical models
+        # We can try to get them from the dataframes or session state
+        team_id_h = st.session_state.get("team_h_current_team_id", "unknown")
+        team_id_a = st.session_state.get("team_a_current_team_id", "unknown")
 
     for rot_h in range(1, 7):
         for rot_a in range(1, 7):
             base_sim = VolleyballPointByPointSimulator(seed=None)
-            base_sim.load_parameters(
-                global_df,
-                team_home_df,
-                team_away_df,
-                match_type="Amichevole",
-                match_date="08/10/2025",
-            )
+            
+            if active_model:
+                base_sim.load_model_params(active_model["params"], team_id_h, team_id_a)
+            else:
+                base_sim.load_parameters(
+                    global_df,
+                    team_home_df,
+                    team_away_df,
+                    match_type="Amichevole",
+                    match_date="08/10/2025",
+                )
 
             if is_tiebreak:
                 base_sim.set_initial_conditions(
@@ -562,6 +600,8 @@ def run_simulation_and_store():
         or st.session_state.get("team_a_current_team_id")
         or "away team"
     )
+    
+    active_model = st.session_state.get("active_model")
 
     results = {}
     for serve_team in ("h", "a"):
@@ -573,6 +613,7 @@ def run_simulation_and_store():
             score_team_a,
             score_team_b,
             is_tiebreak,
+            active_model=active_model
         )
         results[serve_team] = {
             "df": df_res_all,
@@ -858,6 +899,84 @@ def page_rotation_main():
 
 def page_teams_summary():
     st.title("Teams Summary")
+    
+    active_model = st.session_state.get("active_model")
+    
+    if active_model and active_model["type"] == "empirical":
+        st.info(f"Using Active Model: **{active_model['name']}** (Empirical)")
+        
+        # Empirical logic
+        params = active_model["params"]
+        level = params.get("level", "global")
+        global_mean = params.get("global_mean", 0.5)
+        
+        data = []
+        
+        if level == "team":
+            break_team = params.get("break_team", {})
+            sideout_team = params.get("sideout_team", {})
+            all_teams = set(break_team.keys()) | set(sideout_team.keys())
+            
+            for t in all_teams:
+                data.append({
+                    "team_id": t,
+                    "team_name": t, # We might not have names map here easily, use ID
+                    "Breakpoint_Prob": break_team.get(t, global_mean),
+                    "Sideout_Prob": sideout_team.get(t, global_mean)
+                })
+                
+        elif level == "rotation":
+            break_pos = params.get("break_pos", {})
+            sideout_pos = params.get("sideout_pos", {})
+            # Keys are (team_id, pos)
+            # We want to average across positions for the scatter plot
+            
+            team_stats = {}
+            for (tid, pos), val in break_pos.items():
+                if tid not in team_stats: team_stats[tid] = {"bp": [], "so": []}
+                team_stats[tid]["bp"].append(val)
+                
+            for (tid, pos), val in sideout_pos.items():
+                if tid not in team_stats: team_stats[tid] = {"bp": [], "so": []}
+                team_stats[tid]["so"].append(val)
+                
+            for tid, stats in team_stats.items():
+                bp_avg = np.mean(stats["bp"]) if stats["bp"] else global_mean
+                so_avg = np.mean(stats["so"]) if stats["so"] else global_mean
+                data.append({
+                    "team_id": tid,
+                    "team_name": tid,
+                    "Breakpoint_Prob": bp_avg,
+                    "Sideout_Prob": so_avg
+                })
+        else:
+            st.warning("Global model selected. All teams have same probability.")
+            st.write(f"Global Mean Probability: {global_mean:.4f}")
+            return
+
+        df = pd.DataFrame(data)
+        
+        if df.empty:
+            st.warning("No data available for plotting.")
+            return
+
+        fig = px.scatter(
+            df,
+            x="Breakpoint_Prob",
+            y="Sideout_Prob",
+            hover_name="team_name",
+            title="Team Average Breakpoint vs Sideout Probability (Empirical)",
+            width=600,
+            height=600
+        )
+        
+        # Add reference lines at global mean
+        fig.add_hline(y=global_mean, line_dash="dash", line_color="gray", opacity=0.5)
+        fig.add_vline(x=global_mean, line_dash="dash", line_color="gray", opacity=0.5)
+        
+        st.plotly_chart(fig)
+        st.dataframe(df)
+        return
     
     df_all = load_params()
     team_params_df = get_team_params(df_all)
@@ -1258,6 +1377,192 @@ def page_load_data():
 
 
 # ------------------------------------------------------------
+# Model Analysis Page
+# ------------------------------------------------------------
+def page_model_analysis():
+    st.title("Model Analysis")
+    
+    # 1. Sidebar Controls
+    st.sidebar.markdown("### Model Configuration")
+    
+    model_choice = st.sidebar.selectbox(
+        "Select Model",
+        options=[
+            "logistic_rotation_alpha_0.1",
+            "logistic_rotation_alpha_0.05",
+            "logistic_rotation_alpha_0.01",
+            "logistic_rotation_alpha_0.005",
+            "logistic_rotation_alpha_0.001",
+            "empirical_global_only",
+            "empirical_team",
+            "empirical_team_rotation"
+        ]
+    )
+    
+    backtest_choice = st.sidebar.selectbox(
+        "Backtest Method",
+        options=["LOO", "weekly_sequential"],
+        help="LOO: Leave-One-Out Cross Validation. Weekly Sequential: Train on past, predict future."
+    )
+    
+    st.sidebar.info(
+        "**LOO**: Trains on N-1 matches, tests on 1. Good for small data.\n"
+        "**Weekly Sequential**: Simulates real-world scenario. Trains on past weeks, tests on current week."
+    )
+    
+    # 2. Action Buttons
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        apply_all = st.button("Apply All Models (Compare)", type="primary")
+        
+    with col2:
+        apply_single = st.button(f"Apply '{model_choice}' Only")
+        
+    # 3. Logic
+    
+    # Helper to instantiate model
+    def get_model_instance(name):
+        if name.startswith("logistic_rotation_alpha_"):
+            alpha = float(name.split("_")[-1])
+            return LogisticRegressionModel(alpha=alpha)
+        elif name == "empirical_global_only":
+            return GlobalMeanModel()
+        elif name == "empirical_team":
+            return SimpleEmpiricalModel()
+        elif name == "empirical_team_rotation":
+            return EmpiricalModel()
+        return None
+
+    def preprocess_data_for_models(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure columns are in correct format for models.
+        Rally data already has: serve_team (h/a), point_won_team (h/a), p_h, p_a, team_id_h, team_id_a
+        """
+        df = df.copy()
+        
+        # Ensure team IDs are strings
+        if "team_id_h" in df.columns:
+            df["team_id_h"] = df["team_id_h"].astype(str)
+        if "team_id_a" in df.columns:
+            df["team_id_a"] = df["team_id_a"].astype(str)
+            
+        # Check required columns
+        required = ["serve_team", "point_won_team", "p_h", "p_a", "team_id_h", "team_id_a"]
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            st.error(f"Rally data missing columns: {missing}")
+            return pd.DataFrame()
+            
+        return df
+
+    # Load data (Rally Level)
+    df_raw = load_data_from_db()
+    if df_raw.empty:
+        st.error("No rally data available. Please load data first.")
+        return
+        
+    # Preprocess
+    df = preprocess_data_for_models(df_raw)
+    if df.empty:
+        st.warning("No valid data found for analysis.")
+        return
+    
+    if apply_all:
+        st.markdown("### Model Comparison")
+        
+        models_to_run = [
+            "logistic_rotation_alpha_0.1",
+            "logistic_rotation_alpha_0.01",
+            "empirical_global_only",
+            "empirical_team",
+            "empirical_team_rotation"
+        ]
+        
+        results = []
+        calibration_plots = {}
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, m_name in enumerate(models_to_run):
+            status_text.text(f"Running backtest for {m_name}...")
+            model = get_model_instance(m_name)
+            
+            if backtest_choice == "LOO":
+                y_true, y_pred = run_loocv_backtest(model, df)
+            else:
+                y_true, y_pred = run_sequential_backtest(model, df)
+                
+            metrics = calculate_metrics(y_true, y_pred)
+            metrics["Model"] = m_name
+            results.append(metrics)
+            
+            # Generate plot
+            plot_img = plot_calibration(y_true, y_pred, m_name)
+            calibration_plots[m_name] = plot_img
+            
+            progress_bar.progress((i + 1) / len(models_to_run))
+            
+        status_text.text("Done!")
+        
+        # Display Results Table
+        res_df = pd.DataFrame(results)
+        st.dataframe(res_df.style.highlight_min(subset=["Log Loss", "Brier Score"], color="lightgreen"))
+        
+        # Display Plots
+        st.markdown("### Calibration Plots")
+        cols = st.columns(3)
+        for i, m_name in enumerate(models_to_run):
+            with cols[i % 3]:
+                st.image(calibration_plots[m_name], use_column_width=True)
+                
+    if apply_single or apply_all:
+        # If Apply Single was clicked, OR Apply All (we still want to set the selected model as active)
+        # Actually, user said: "Apply_all will run all... Apply will run only the currently selected"
+        # AND "Crucially, the model selected in the dropdown should also be fitted on *all* matches and then used as the active model"
+        
+        # So regardless of which button, we fit the SELECTED model on ALL data and set as active.
+        
+        st.divider()
+        st.markdown(f"### Active Model: **{model_choice}**")
+        
+        with st.spinner(f"Fitting {model_choice} on ALL data..."):
+            model = get_model_instance(model_choice)
+            model.fit(df)
+            
+            # Get params for simulator
+            sim_params = model.get_simulator_params()
+            
+            # Store in session state
+            st.session_state["active_model"] = {
+                "name": model_choice,
+                "params": sim_params,
+                "type": sim_params["type"] # logistic or empirical
+            }
+            
+            st.success(f"Model {model_choice} fitted and set as ACTIVE.")
+            st.info("This model will now be used in 'Teams Summary' and 'Rotation Simulator'.")
+            
+            # If Apply Single was clicked, show its specific stats (maybe backtest just for it)
+            if apply_single:
+                st.markdown("#### Backtest Results for Selected Model")
+                if backtest_choice == "LOO":
+                    y_true, y_pred = run_loocv_backtest(model, df) # Note: model is already fitted, but backtest refits.
+                    # Wait, run_loocv_backtest refits internally.
+                    # So we need to pass a fresh instance or the same one (it will be refitted).
+                    # It's fine.
+                else:
+                    y_true, y_pred = run_sequential_backtest(model, df)
+                    
+                metrics = calculate_metrics(y_true, y_pred)
+                st.write(metrics)
+                
+                plot_img = plot_calibration(y_true, y_pred, model_choice)
+                st.image(plot_img)
+
+
+# ------------------------------------------------------------
 # Entry point
 # ------------------------------------------------------------
 def main():
@@ -1286,7 +1591,7 @@ def main():
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(
         "Select page",
-        options=[PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_LOAD_DATA, PAGE_WIP],
+        options=[PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_MODEL_ANALYSIS, PAGE_LOAD_DATA, PAGE_WIP],
         index=0,
     )
 
@@ -1294,6 +1599,8 @@ def main():
         page_rotation_main()
     elif page == PAGE_TEAMS_SUMMARY:
         page_teams_summary()
+    elif page == PAGE_MODEL_ANALYSIS:
+        page_model_analysis()
     elif page == PAGE_LOAD_DATA:
         page_load_data()
     else:

@@ -66,6 +66,9 @@ class VolleyballPointByPointSimulator:
     # ------------------------------------------------------------------
     # LOAD PARAMETERS
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # LOAD PARAMETERS
+    # ------------------------------------------------------------------
     def load_parameters(
         self,
         global_df: pd.DataFrame,
@@ -76,16 +79,31 @@ class VolleyballPointByPointSimulator:
     ):
         """
         Parse the 3 dataframes coming from params_out_break_sideout.csv.
+        This is for the LOGISTIC model (legacy/default support).
         """
+        self.model_type = "logistic"
+        
         g = global_df.loc[global_df["par_name"] == "global_breakpoint"]
         if g.empty:
-            raise ValueError("global_df must contain par_name == 'global_breakpoint'")
-        self.global_logit = float(g["par_value"].iloc[0])
+            # Fallback or error?
+            # If we are using this method, we expect these dfs to be valid for logistic
+            # But maybe we are just initializing defaults.
+            self.global_logit = 0.0
+        else:
+            self.global_logit = float(g["par_value"].iloc[0])
 
         self.match_type = match_type
         self.match_date = match_date
 
         def _parse_team(df: pd.DataFrame) -> dict:
+            if df.empty:
+                return {
+                    "team_id": "unknown", "team_name": "unknown",
+                    "breakpoint_team_adjustment": 0.0, "sideout_team_adjustment": 0.0,
+                    "break_pos": {i: 0.0 for i in range(1, 7)},
+                    "sideout_pos": {i: 0.0 for i in range(1, 7)},
+                }
+            
             # assume df is filtered to one team
             team_id = str(df["team_id"].iloc[0])
             team_name = df["team_name"].iloc[0]
@@ -123,6 +141,46 @@ class VolleyballPointByPointSimulator:
         self.team_id_a = self.away_params["team_id"]
         self.team_name_h = self.home_params["team_name"]
         self.team_name_a = self.away_params["team_name"]
+
+    def load_model_params(self, params: dict, team_id_h: str, team_id_a: str):
+        """
+        Load parameters from a model's get_simulator_params().
+        """
+        self.model_type = params.get("type", "logistic")
+        self.model_params = params
+        
+        # Set team IDs (needed for lookups)
+        self.team_id_h = str(team_id_h)
+        self.team_id_a = str(team_id_a)
+        # We might not have names if passing raw IDs, but that's fine for logic
+        self.team_name_h = str(team_id_h)
+        self.team_name_a = str(team_id_a)
+
+        if self.model_type == "logistic":
+            # We need to map the 'params' dataframe/dict back to the structure expected by _rally_win_prob
+            # The logistic model returns a dataframe of parameters.
+            # We can reuse load_parameters if we reconstruct the dataframes, 
+            # OR we can parse the params df here.
+            
+            # For simplicity, let's assume if we use this method with logistic, 
+            # we might need to adapt. 
+            # BUT, the current app uses load_parameters with dataframes constructed from UI.
+            # If we switch to using the fitted model, we need to handle that.
+            
+            # If params['params'] is a DataFrame (from model.viz_parameters()):
+            df_params = params['params']
+            
+            # Split into global, home, away
+            global_df = df_params[df_params['par_type'] == 'global']
+            team_h_df = df_params[(df_params['par_type'] == 'team') & (df_params['team_id'] == self.team_id_h)]
+            team_a_df = df_params[(df_params['par_type'] == 'team') & (df_params['team_id'] == self.team_id_a)]
+            
+            self.load_parameters(global_df, team_h_df, team_a_df)
+            
+        elif self.model_type == "empirical":
+            # Empirical params are dicts
+            # We just store them.
+            pass
 
     # ------------------------------------------------------------------
     # INITIAL CONDITIONS
@@ -179,25 +237,71 @@ class VolleyballPointByPointSimulator:
 
     def _rally_win_prob(self) -> float:
         """
-        p(server wins) = σ(global_breakpoint + server_break + server_break_pos
-                           - recv_sideout - recv_sideout_pos)
+        Calculate probability that the SERVER wins the rally (Break Point).
         """
-        logit = self.global_logit
-
-        if self.serve_team == "h":
-            # server = home, receiver = away
-            logit += self.home_params["breakpoint_team_adjustment"]
-            logit += self.home_params["break_pos"].get(self.p_h, 0.0)
-            logit -= self.away_params["sideout_team_adjustment"]
-            logit -= self.away_params["sideout_pos"].get(self.p_a, 0.0)
-        else:
-            # server = away, receiver = home
-            logit += self.away_params["breakpoint_team_adjustment"]
-            logit += self.away_params["break_pos"].get(self.p_a, 0.0)
-            logit -= self.home_params["sideout_team_adjustment"]
-            logit -= self.home_params["sideout_pos"].get(self.p_h, 0.0)
-
-        return self._sigmoid(logit)
+        if getattr(self, 'model_type', 'logistic') == 'logistic':
+            # Logistic Logic
+            logit = self.global_logit
+    
+            if self.serve_team == "h":
+                # server = home, receiver = away
+                logit += self.home_params["breakpoint_team_adjustment"]
+                logit += self.home_params["break_pos"].get(self.p_h, 0.0)
+                logit -= self.away_params["sideout_team_adjustment"]
+                logit -= self.away_params["sideout_pos"].get(self.p_a, 0.0)
+            else:
+                # server = away, receiver = home
+                logit += self.away_params["breakpoint_team_adjustment"]
+                logit += self.away_params["break_pos"].get(self.p_a, 0.0)
+                logit -= self.home_params["sideout_team_adjustment"]
+                logit -= self.home_params["sideout_pos"].get(self.p_h, 0.0)
+    
+            return self._sigmoid(logit)
+            
+        elif self.model_type == 'empirical':
+            # Empirical Logic
+            # We need to look up (server_id, server_pos) and (receiver_id, receiver_pos)
+            # and average them.
+            
+            params = self.model_params
+            level = params.get("level", "global")
+            global_mean = params.get("global_mean", 0.5)
+            
+            if level == "global":
+                return global_mean
+                
+            if self.serve_team == "h":
+                s_id = self.team_id_h
+                r_id = self.team_id_a
+                s_p = self.p_h
+                r_p = self.p_a
+            else:
+                s_id = self.team_id_a
+                r_id = self.team_id_h
+                s_p = self.p_a
+                r_p = self.p_h
+                
+            if level == "team":
+                break_team = params.get("break_team", {})
+                sideout_team = params.get("sideout_team", {})
+                
+                p_break = break_team.get(s_id, global_mean)
+                p_sideout = sideout_team.get(r_id, global_mean)
+                
+            elif level == "rotation":
+                break_pos = params.get("break_pos", {})
+                sideout_pos = params.get("sideout_pos", {})
+                
+                # Keys in dict are (team_id, pos)
+                # Note: team_id in dicts are strings, pos are ints
+                p_break = break_pos.get((s_id, s_p), global_mean)
+                p_sideout = sideout_pos.get((r_id, r_p), global_mean)
+            else:
+                return global_mean
+                
+            return (p_break + p_sideout) / 2.0
+            
+        return 0.5 # Fallback
 
     # ------------------------------------------------------------------
     # SIMULATION

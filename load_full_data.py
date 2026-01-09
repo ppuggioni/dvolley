@@ -207,7 +207,7 @@ def _try_parse_date(date_string: str) -> str:
     Attempt to parse a date string from common formats.
     Returns the date in YYYY-MM-DD format if successful, otherwise the original string.
     """
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
         try:
             return datetime.strptime(date_string, fmt).strftime("%Y-%m-%d")
         except (ValueError, TypeError):

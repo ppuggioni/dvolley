@@ -119,7 +119,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
             dayfirst=True,
             dtype={"team_id_h": str, "team_id_a": str},  # Ensure team IDs are strings
         )
-        df["match_date"] = pd.to_datetime(df["match_date"])
+        df["match_date"] = pd.to_datetime(df["match_date"], format='mixed', dayfirst=True)
         
         # Double-check team_id columns are strings (in case dtype was ignored)
         for col in ["team_id_h", "team_id_a"]:

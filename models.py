@@ -18,27 +18,17 @@ class BaseModel(ABC):
     def name(self) -> str:
         pass
 
+    @abstractmethod
+    def get_simulator_params(self) -> dict:
+        """Returns parameters needed by the simulator."""
+        pass
+
 class LogisticRegressionModel(BaseModel):
     def __init__(self, alpha=0.1):
         self.alpha = alpha
         self.model = VolleyballBreakpointSideoutRegModelNoHome(alpha=alpha)
         
     def fit(self, df: pd.DataFrame):
-        # The model class expects to load data from CSV usually, but we can hack it 
-        # or we can modify it to accept a dataframe. 
-        # Looking at analysis_regr.py, load_data takes a csv path.
-        # But we can manually set the internal state if we are careful, 
-        # OR we can save to a temp csv. Saving to temp csv is safer/easier given existing code.
-        
-        # Actually, let's see if we can just inject the dataframe.
-        # The load_data method does a lot of preprocessing (indices, weights, etc).
-        # It's better to modify the underlying class to accept a DF, but for now 
-        # I will use a temp file approach to be robust and not break existing code.
-        
-        # Wait, I can just copy the logic from load_data but accept a DF.
-        # But to avoid code duplication, I'll use the temp file trick for now.
-        # It's not the most efficient but it's robust.
-        
         import tempfile
         import os
         
@@ -59,48 +49,30 @@ class LogisticRegressionModel(BaseModel):
         
     @property
     def name(self) -> str:
-        return f"LogReg(alpha={self.alpha})"
+        return f"logistic_rotation_alpha_{self.alpha}"
+
+    def get_simulator_params(self) -> dict:
+        return {
+            "type": "logistic",
+            "params": self.model.viz_parameters()
+        }
 
 class EmpiricalModel(BaseModel):
+    """Empirical model using team and rotation statistics."""
     def __init__(self):
-        self.emp_break_pos = {} # team_id -> pos -> prob
-        self.emp_sideout_pos = {} # team_id -> pos -> prob
+        self.emp_break_pos = {} # (team_id, pos) -> prob
+        self.emp_sideout_pos = {} # (team_id, pos) -> prob
         self.global_mean = 0.5
         
     def fit(self, df: pd.DataFrame):
-        # Calculate empirical probabilities
-        # We need to replicate the logic:
-        # Break point prob for (Team T, Rotation R) = Mean of points won when T serves in R
-        # Sideout prob for (Team T, Rotation R) = Mean of points won when T receives in R (which is 1 - server_win)
-        # Wait, the user defined Empirical as: "avg of the two empirical probabilities"
-        # In compare_alphas.py: (t1_bp_pos_emp[r] + t2_so_pos_emp[c]) / 2.0
-        # where t1_bp_pos_emp is mean of server winning
-        # and t2_so_pos_emp is mean of SERVER winning when T2 is receiving?
-        
-        # Let's check analysis_regr.py _compute_empirical_buckets:
-        # emp_sideout_pos[t] = y[mask_r].mean()
-        # y is 1 if server wins.
-        # So emp_sideout_pos[t] is "Prob server wins when T receives".
-        # So yes, we just average them.
-        
-        # Preprocessing
         df = df.copy()
         for col in ["team_id_h", "team_id_a"]:
             if col in df.columns:
                 df[col] = df[col].astype(str)
                 
-        # Identify server/receiver for each row
         serve_is_home = (df["serve_team"] == "h")
         
-        # We need to handle team IDs carefully
-        # Let's just iterate over unique teams
-        teams = pd.concat([df["team_id_h"], df["team_id_a"]]).unique()
-        
-        # Point won by server?
-        # point_won_team = h/a
-        # server = h if serve_is_home else a
-        # y = 1 if server == point_won_team
-        
+        # y = 1 if server wins point
         y = np.where(
             (serve_is_home & (df["point_won_team"] == "h")) |
             (~serve_is_home & (df["point_won_team"] == "a")),
@@ -109,32 +81,19 @@ class EmpiricalModel(BaseModel):
         
         self.global_mean = y.mean()
         
-        # Store data for fast lookup
-        # We can use groupby
-        
-        # Add helper columns
         df['y'] = y
         df['server_id'] = np.where(serve_is_home, df['team_id_h'], df['team_id_a'])
         df['receiver_id'] = np.where(serve_is_home, df['team_id_a'], df['team_id_h'])
         
-        # Server rotation (1-6)
-        # if serve_is_home, p_h; else p_a
+        # Server/Receiver rotation
         df['server_pos'] = np.where(serve_is_home, df['p_h'], df['p_a'])
-        
-        # Receiver rotation (1-6)
-        # if serve_is_home, p_a; else p_h
         df['receiver_pos'] = np.where(serve_is_home, df['p_a'], df['p_h'])
         
-        # Groupby
+        # Calculate means
         self.emp_break_pos = df.groupby(['server_id', 'server_pos'])['y'].mean().to_dict()
         self.emp_sideout_pos = df.groupby(['receiver_id', 'receiver_pos'])['y'].mean().to_dict()
         
     def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
-        # For each row, look up server stats and receiver stats
-        
-        # We need to do this efficiently. Apply is slow but easiest to write.
-        # Vectorized map is better.
-        
         df = df.copy()
         for col in ["team_id_h", "team_id_a"]:
             if col in df.columns:
@@ -149,10 +108,10 @@ class EmpiricalModel(BaseModel):
         
         preds = []
         for i in range(len(df)):
-            s_id = server_ids[i]
-            r_id = receiver_ids[i]
-            s_p = server_pos[i]
-            r_p = receiver_pos[i]
+            s_id = str(server_ids[i])
+            r_id = str(receiver_ids[i])
+            s_p = int(server_pos[i])
+            r_p = int(receiver_pos[i])
             
             p_break = self.emp_break_pos.get((s_id, s_p), self.global_mean)
             p_sideout = self.emp_sideout_pos.get((r_id, r_p), self.global_mean)
@@ -164,7 +123,19 @@ class EmpiricalModel(BaseModel):
 
     @property
     def name(self) -> str:
-        return "EmpiricalModel"
+        return "empirical_team_rotation"
+
+    def get_simulator_params(self) -> dict:
+        # Convert tuple keys to string representation or nested dict for easier handling if needed
+        # But simulator can handle tuple keys if we are careful.
+        # Let's keep it simple: pass the dicts.
+        return {
+            "type": "empirical",
+            "break_pos": self.emp_break_pos,
+            "sideout_pos": self.emp_sideout_pos,
+            "global_mean": self.global_mean,
+            "level": "rotation"
+        }
 
 class SimpleEmpiricalModel(BaseModel):
     """Empirical model using only team-level statistics (no rotation info)."""
@@ -175,16 +146,12 @@ class SimpleEmpiricalModel(BaseModel):
         self.global_mean = 0.5
         
     def fit(self, df: pd.DataFrame):
-        # Calculate empirical probabilities at team level only
         df = df.copy()
         for col in ["team_id_h", "team_id_a"]:
             if col in df.columns:
                 df[col] = df[col].astype(str)
                 
-        # Identify server/receiver for each row
         serve_is_home = (df["serve_team"] == "h")
-        
-        # Point won by server?
         y = np.where(
             (serve_is_home & (df["point_won_team"] == "h")) |
             (~serve_is_home & (df["point_won_team"] == "a")),
@@ -193,12 +160,10 @@ class SimpleEmpiricalModel(BaseModel):
         
         self.global_mean = y.mean()
         
-        # Add helper columns
         df['y'] = y
         df['server_id'] = np.where(serve_is_home, df['team_id_h'], df['team_id_a'])
         df['receiver_id'] = np.where(serve_is_home, df['team_id_a'], df['team_id_h'])
         
-        # Groupby team only (no position)
         self.emp_break_team = df.groupby('server_id')['y'].mean().to_dict()
         self.emp_sideout_team = df.groupby('receiver_id')['y'].mean().to_dict()
         
@@ -214,20 +179,28 @@ class SimpleEmpiricalModel(BaseModel):
         
         preds = []
         for i in range(len(df)):
-            s_id = server_ids[i]
-            r_id = receiver_ids[i]
+            s_id = str(server_ids[i])
+            r_id = str(receiver_ids[i])
             
             p_break = self.emp_break_team.get(s_id, self.global_mean)
             p_sideout = self.emp_sideout_team.get(r_id, self.global_mean)
             
-            # Average them
             preds.append((p_break + p_sideout) / 2.0)
             
         return np.array(preds)
 
     @property
     def name(self) -> str:
-        return "SimpleEmpirical"
+        return "empirical_team"
+
+    def get_simulator_params(self) -> dict:
+        return {
+            "type": "empirical",
+            "break_team": self.emp_break_team,
+            "sideout_team": self.emp_sideout_team,
+            "global_mean": self.global_mean,
+            "level": "team"
+        }
 
 class GlobalMeanModel(BaseModel):
     """Simplest baseline: predicts global mean for all rallies."""
@@ -236,23 +209,26 @@ class GlobalMeanModel(BaseModel):
         self.global_mean = 0.5
         
     def fit(self, df: pd.DataFrame):
-        # Calculate global break point probability
         df = df.copy()
-        
         serve_is_home = (df["serve_team"] == "h")
         y = np.where(
             (serve_is_home & (df["point_won_team"] == "h")) |
             (~serve_is_home & (df["point_won_team"] == "a")),
             1, 0
         )
-        
         self.global_mean = y.mean()
         
     def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
-        # Return the same probability for all rows
         return np.full(len(df), self.global_mean)
 
     @property
     def name(self) -> str:
-        return "GlobalMean"
+        return "empirical_global_only"
+
+    def get_simulator_params(self) -> dict:
+        return {
+            "type": "empirical",
+            "global_mean": self.global_mean,
+            "level": "global"
+        }
 

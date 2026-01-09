@@ -74,10 +74,13 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
                 # 4 match type  -> Amichevole
                 if len(parts) > 0:
                     raw_date = parts[0]  # "08/10/2025"
-                    try:
-                        match_date = datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
-                    except ValueError:
-                        match_date = raw_date
+                    match_date = raw_date
+                    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
+                        try:
+                            match_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+                            break
+                        except ValueError:
+                            continue
                 if len(parts) > 4:
                     match_type = parts[4]  # "Amichevole"
             i = j  # continue from here
