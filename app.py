@@ -1475,6 +1475,8 @@ def page_model_analysis():
         models_to_run = [
             "logistic_rotation_alpha_0.1",
             "logistic_rotation_alpha_0.01",
+            "logistic_rotation_alpha_0.005",
+            "logistic_rotation_alpha_0.001",
             "empirical_global_only",
             "empirical_team",
             "empirical_team_rotation"
