@@ -1,10 +1,10 @@
 # dvolley
 
-`dvolley` collects tools to parse Data Volley `.dvw` match logs, fit rally-level breakpoint/sideout models, and inspect rotation scenarios through a Streamlit UI or the simulation APIs.
+`dvolley` collects tools to ingest Data Volley `.dvw` match logs into Supabase, fit rally-level breakpoint/sideout models, and inspect rotation scenarios through a Streamlit UI or the simulation APIs.
 
 ## Highlights
 
-- ingest raw Data Volley exports into consistent rally-level CSV datasets
+- ingest raw Data Volley exports into Supabase (rally and touch tables)
 - fit logistic-regression and Bayesian breakpoint/sideout models with time decay and constrained parameters
 - run fast parameter-driven point-by-point simulators (CLI or Python API) that mirror the models
 - explore 6x6 rotation grids interactively in Streamlit to answer practical coaching questions
@@ -18,11 +18,11 @@
 | `run_simulations.py` | Example CLI utility that sweeps all 6x6 starting rotations and writes `rotation_win_probs.csv`. |
 | `analysis_regr.py` | Logistic-regression (`scikit-learn`) model that produces breakpoint/sideout parameters. |
 | `analysis.py` | Bayesian (`pymc`) serve-receive model for deeper analyses and posterior visualisation. |
-| `load_data.py` | Lightweight DVW parser that converts every rally into tabular rows and saves `clean_data/clean_data.csv`. |
-| `load_full_data.py` | Alternative parser built on `datavolley` when you need the complete scout with richer metadata. |
+| `load_data.py` | Lightweight DVW parser that converts every rally into tabular rows for Supabase upload. |
+| `load_full_data.py` | Full scout parser (touch-level) built on `datavolley`, also uploaded to Supabase. |
 | `data/` | Drop raw `.dvw` exports here (sample files are included). |
-| `clean_data/` | Cached rally-level CSVs produced by the loaders. |
-| `params/` | Model parameter files consumed by the simulators (`params_out_break_sideout.csv`). |
+| `reset_and_reload_db.py` | Wipes Supabase tables and reloads everything from Google Drive. |
+| `normalize_db_dates.py` | Normalizes `match_date` and `match_alternative_id` in Supabase. |
 | `requirements.txt` | Minimal dependencies for the Streamlit app and regression workflow. |
 
 ## Getting started
@@ -37,49 +37,33 @@
     pip install pymc arviz pytensor datavolley  # optional: needed for analysis.py / load_full_data.py
     ```
 
-3. Place your `.dvw` matches under `data/` and follow the workflow below.
+3. Configure Supabase and Google Drive credentials in `st.secrets` (see `database_connection.py` and `gdrive_utils.py`).
 
 ## Typical workflow
 
-1. Parse new DVW files into `clean_data/clean_data.csv` with `load_data.py`.
-2. Fit the logistic breakpoint/sideout model via `analysis_regr.py` to refresh `params/params_out_break_sideout.csv`.
+1. Use the Streamlit **Data Management** page to sync new `.dvw` files from Google Drive into Supabase.
+2. Fit the logistic model inside the app (alpha=0.001) to populate in-memory parameters.
 3. Launch the Streamlit app (`streamlit run app.py`) to explore rotations with the latest parameters.
-4. Optionally use `run_simulations.py` or the simulator classes directly for batch analysis or what-if comparisons.
+4. Optionally use `run_simulations.py` or the simulator classes directly for batch analysis.
 
 ## Data preparation
 
 ### `load_data.py`
 
 - `dvw_rallies_to_df` reads CP1252 DVW text exports, tracks setter rotations, and emits one row per rally with scoreboard pre/post states.
-- Running the script walks every file in `./data` and concatenates the results into `./clean_data/clean_data.csv`.
-
-```powershell
-python load_data.py
-```
+- `update_database(...)` uploads rally rows into Supabase; dates are normalized to `YYYY-MM-DD`.
 
 Key columns include `match_type`, `match_date`, `team_id_h`, `team_id_a`, `team_h`, `team_a`, `set_number`, `pre/post_set_won_*`, `pre/post_point_won_*`, `p_h`, `p_a`, `point_won_team`, `serve_team`, and `serve_h/serve_a`.
 
 ### `load_full_data.py`
 
-When you need the entire scout (skills, video time, etc.), use the richer parser that leverages `datavolley`:
-
-```powershell
-python load_full_data.py
-```
-
-It emits `clean_full_data.csv` with per-action metadata that you can align or merge later via `concat_align_and_save`.
+When you need the entire scout (skills, video time, etc.), use the richer parser that leverages `datavolley` and uploads to Supabase via `update_database_full(...)`.
 
 ## Modeling
 
 ### Logistic baseline (`analysis_regr.py`)
 
-`VolleyballBreakpointSideoutRegModelNoHome` ingests `clean_data/clean_data.csv`, applies exponential time decay, enforces sum-to-zero constraints for teams/rotations, and fits a constrained logistic regression through `SGDClassifier`. The end product is a tidy parameter table compatible with the simulator stack.
-
-```powershell
-python analysis_regr.py
-```
-
-Adjust the paths near the bottom of the script if your data/params live elsewhere. The default run writes `./params/params_out_break_sideout.csv`.
+`VolleyballBreakpointSideoutRegModelNoHome` ingests rally-level data from Supabase, applies exponential time decay, enforces sum-to-zero constraints for teams/rotations, and fits a constrained logistic regression through `SGDClassifier`. The app exposes a one-click refit (alpha=0.001) and stores parameters in memory.
 
 ### Bayesian serve-receive model (`analysis.py`)
 
@@ -91,15 +75,10 @@ python analysis.py
 
 Set `csv_path` inside the `__main__` section if you want to point at a different cleaned dataset.
 
-## Parameter files
+## Database utilities
 
-The Streamlit app and simulators expect CSV files with the schema used in `params/params_out_break_sideout.csv`:
-
-- One `global` row with `par_name == "global_breakpoint"`.
-- For every team: `breakpoint_team_adjustment`, `sideout_team_adjustment`, and `breakpoint_pos_1`..`breakpoint_pos_6` / `sideout_pos_1`..`sideout_pos_6`.
-- Optional helper columns such as `impact_on_baseline_probability` or `empirical_probability` can be present but are ignored by the simulator.
-
-`app.py` reads the file defined by `PARAMS_FILE` (defaults to `./params/params_out_break_sideout.csv`), so update that constant if you save multiple parameter exports.
+- `reset_and_reload_db.py --confirm` wipes `rally_level_data` and `touch_level_data`, then reloads everything from Google Drive.
+- `normalize_db_dates.py --only-match-alt` fixes `match_alternative_id` from normalized dates and team IDs.
 
 ## Streamlit rotation simulator
 
@@ -111,7 +90,7 @@ streamlit run app.py
 
 The sidebar (see `rotation_simulator_controls_in_sidebar`) lets you:
 
-- load base parameters for two teams from the dropdowns and tweak global/team/rotation adjustments with sliders,
+- load base parameters for two teams (after fitting) and tweak global/team/rotation adjustments with sliders,
 - set the initial score, select the serving team, and toggle a tiebreak,
 - click **APPLY** to recompute the full 6x6 grid by calling `compute_rotation_probability_matrix`, which stitches together new `global_df`, `team_home_df`, and `team_away_df` snapshots before passing them to the simulator.
 
@@ -160,8 +139,8 @@ That API makes it easy to simulate arbitrary game states, reseed rotations mid-s
 
 ## Troubleshooting & tips
 
-- If Streamlit cannot find your parameter file, confirm `PARAMS_FILE` points to the export you generated with `analysis_regr.py`.
+- If the app says no parameters are fitted, load data from the DB and click **Fit model (alpha=0.001)**.
 - The loaders assume UTF-8/CP1252 DVW text files. If Data Volley exports a new format, adjust `dvw_rallies_to_df` accordingly.
 - `analysis_regr.py` expects every row to have `serve_team` and rotation columns; drop rallies with missing setters before fitting.
 - Bayesian runs (`analysis.py`) can take a while; start with fewer draws or a subset of the data if you only need sanity checks.
-- Keep raw data under `data/` and generated artefacts (`clean_data/`, `params/`, `rotation_win_probs.csv`) out of version control if the files are large or sensitive.
+- Keep raw data under `data/` and generated artefacts (e.g., `rotation_win_probs.csv`) out of version control if files are large or sensitive.
