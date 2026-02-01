@@ -256,3 +256,27 @@ def fetch_touches_by_match_id(match_id: str) -> pd.DataFrame:
     except Exception as e:
         logging.error(f"Error fetching touches for match {match_id}: {e}")
         return pd.DataFrame()
+
+
+def delete_all_rallies() -> int:
+    """
+    Deletes all rows from rally_level_data by file_id batches.
+    Returns the number of file_ids processed.
+    """
+    file_ids = get_existing_file_ids()
+    for file_id in file_ids:
+        try:
+            supabase.table("rally_level_data").delete().eq("file_id", file_id).execute()
+        except Exception as e:
+            logging.error(f"Error deleting rallies for file_id {file_id}: {e}")
+    return len(file_ids)
+
+
+def delete_all_touches() -> None:
+    """
+    Deletes all rows from touch_level_data using unique_row_id filter.
+    """
+    try:
+        supabase.table("touch_level_data").delete().gte("unique_row_id", 0).execute()
+    except Exception as e:
+        logging.error(f"Error deleting touches: {e}")

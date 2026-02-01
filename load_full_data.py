@@ -19,19 +19,12 @@ def normalize_date_str(date_val) -> str | None:
     date_str = str(date_val).strip()
     if not date_str:
         return None
-    try:
-        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m-%d")
-    except ValueError:
-        pass
-    for fmt in ("%d/%m/%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
-    parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
-    if pd.isna(parsed):
-        return date_str
-    return parsed.date().isoformat()
+    return None
 
 
 def list_files_sorted(dir_path):

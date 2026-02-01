@@ -22,22 +22,13 @@ def normalize_date_str(date_val) -> str | None:
     date_str = str(date_val).strip()
     if not date_str:
         return None
-    # Already in ISO format
-    try:
-        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m-%d")
-    except ValueError:
-        pass
-    # Common DV formats
-    for fmt in ("%d/%m/%Y", "%Y/%m/%d"):
+    # Strict formats only to avoid day/month swaps
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
-    # Fallback: pandas parse
-    parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
-    if pd.isna(parsed):
-        return date_str
-    return parsed.date().isoformat()
+    return None
 
 import pandas as pd
 import re
@@ -101,8 +92,8 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
                     match_date = raw_date
                     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
                         try:
-                    match_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
-                    break
+                            match_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+                            break
                         except ValueError:
                             continue
                 if len(parts) > 4:
