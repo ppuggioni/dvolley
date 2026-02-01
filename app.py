@@ -38,7 +38,6 @@ PAGE_TEAMS_SUMMARY = "teams_summary"
 PAGE_LOAD_DATA = "load_data"
 PAGE_MODEL_ANALYSIS = "model_analysis"
 PAGE_WIP = "work in progress"
-PARAMS_FILE = "./params/params_out_break_sideout.csv"
 
 POSITIONS = range(1, 7)
 SLIDER_MIN = -2.0
@@ -48,16 +47,10 @@ SLIDER_STEP = 0.01
 
 
 # ------------------------------------------------------------
-# Load CSV once
+# Parameters are DB-derived only; use refitted params stored in session state.
 # ------------------------------------------------------------
-def load_params(path: str = PARAMS_FILE) -> pd.DataFrame:
-    """Load the whole params file (global + team). Checks session state for refitted params first."""
-    # Check if we have refitted params in session state
-    if "fitted_params_df" in st.session_state:
-        return st.session_state["fitted_params_df"]
-    
-    # Otherwise load from CSV
-    return pd.read_csv(path, dtype={"team_id": str})
+def get_fitted_params_df() -> Optional[pd.DataFrame]:
+    return st.session_state.get("fitted_params_df")
 
 
 def get_team_params(df_all: pd.DataFrame) -> pd.DataFrame:
@@ -76,7 +69,10 @@ def get_global_breakpoint_default(df_all: pd.DataFrame) -> float:
 # ------------------------------------------------------------
 # Model Refitting
 # ------------------------------------------------------------
-def refit_model_on_current_data(rally_df: pd.DataFrame) -> pd.DataFrame:
+def refit_model_on_current_data(
+    rally_df: pd.DataFrame,
+    alpha: float = 0.001,
+) -> pd.DataFrame:
     """
     Refit the regression model on the provided rally-level DataFrame.
     Returns the fitted parameters DataFrame.
@@ -84,7 +80,7 @@ def refit_model_on_current_data(rally_df: pd.DataFrame) -> pd.DataFrame:
     # Instantiate the model
     model = VolleyballBreakpointSideoutRegModelNoHome(
         half_life_days=90.0,
-        alpha=1e-2,
+        alpha=alpha,
         max_iter=5000,
         random_state=42
     )
@@ -771,9 +767,27 @@ def _get_color_style(v: float) -> str:
 # Pages
 # ------------------------------------------------------------
 def page_rotation_main():
-    df_all = load_params()
-    team_params_df = get_team_params(df_all)
-    global_breakpoint_default = get_global_breakpoint_default(df_all)
+    fitted_params_df = get_fitted_params_df()
+    if fitted_params_df is None:
+        st.title("Rotation simulator")
+        loader = get_loader()
+        last_match_date = get_last_match_date(loader.data)
+        if last_match_date:
+            st.info(f"Last match date in DB: {last_match_date}")
+        st.warning("No parameters fitted yet. Please fit the model to continue.")
+        if st.button("Fit model (alpha=0.001)"):
+            if loader.data is None or loader.data.empty:
+                st.error("No rally data loaded yet. Please load data from the database first.")
+            else:
+                with st.spinner("Refitting model..."):
+                    params_df = refit_model_on_current_data(loader.data, alpha=0.001)
+                    st.session_state["fitted_params_df"] = params_df
+                    st.success("Model refitted. You can now use the rotation simulator.")
+                    st.rerun()
+        return
+
+    team_params_df = get_team_params(fitted_params_df)
+    global_breakpoint_default = get_global_breakpoint_default(fitted_params_df)
 
     rotation_simulator_controls_in_sidebar(team_params_df, global_breakpoint_default)
 
@@ -978,8 +992,25 @@ def page_teams_summary():
         st.dataframe(df)
         return
     
-    df_all = load_params()
-    team_params_df = get_team_params(df_all)
+    fitted_params_df = get_fitted_params_df()
+    if fitted_params_df is None:
+        loader = get_loader()
+        last_match_date = get_last_match_date(loader.data)
+        if last_match_date:
+            st.info(f"Last match date in DB: {last_match_date}")
+        st.warning("No parameters fitted yet. Please fit the model to continue.")
+        if st.button("Fit model (alpha=0.001)"):
+            if loader.data is None or loader.data.empty:
+                st.error("No rally data loaded yet. Please load data from the database first.")
+            else:
+                with st.spinner("Refitting model..."):
+                    params_df = refit_model_on_current_data(loader.data, alpha=0.001)
+                    st.session_state["fitted_params_df"] = params_df
+                    st.success("Model refitted. You can now view team summaries.")
+                    st.rerun()
+        return
+
+    team_params_df = get_team_params(fitted_params_df)
     
     # Pivot: rows=team_name, cols=par_name, values=par_value
     pivot = team_params_df.pivot(
@@ -1132,6 +1163,16 @@ def perform_load_async():
     loader.start_loading()
 
 
+def get_last_match_date(df: Optional[pd.DataFrame]) -> Optional[str]:
+    if df is None or df.empty or "match_date" not in df.columns:
+        return None
+    dates = pd.to_datetime(df["match_date"], errors="coerce")
+    if dates.isna().all():
+        return None
+    last_date = dates.max()
+    return last_date.date().isoformat()
+
+
 def page_load_data():
     st.title("Data Management")
     
@@ -1275,7 +1316,10 @@ def page_load_data():
         st.divider()
         
         # Model Refit Section
-        st.markdown("### Refit Model on Current Data")
+        st.markdown("### Fit Model (alpha=0.001)")
+        last_match_date = get_last_match_date(df)
+        if last_match_date:
+            st.caption(f"Last match date in DB: {last_match_date}")
         
         # Show param status
         if "fitted_params_df" in st.session_state:
@@ -1283,7 +1327,7 @@ def page_load_data():
         else:
             st.info("📁 Currently using **default** parameters (from CSV file)")
         
-        if st.button("Refit Model on Current Data"):
+        if st.button("Fit model (alpha=0.001)"):
             with st.spinner("Refitting model... this may take a moment..."):
                 try:
                     # Refit the model on current data
@@ -1589,7 +1633,7 @@ def main():
     if "fitted_params_df" in st.session_state:
         st.sidebar.success("🔧 Using refitted parameters")
     else:
-        st.sidebar.info("📁 Using default parameters")
+        st.sidebar.info("📁 No parameters fitted yet")
 
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(

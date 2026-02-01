@@ -15,6 +15,30 @@ def list_files_sorted(dir_path):
         [os.path.join(dir_path, f) for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))]
     )
 
+
+def normalize_date_str(date_val) -> str | None:
+    if date_val is None or pd.isna(date_val):
+        return None
+    date_str = str(date_val).strip()
+    if not date_str:
+        return None
+    # Already in ISO format
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Common DV formats
+    for fmt in ("%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    # Fallback: pandas parse
+    parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
+    if pd.isna(parsed):
+        return date_str
+    return parsed.date().isoformat()
+
 import pandas as pd
 import re
 
@@ -77,8 +101,8 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
                     match_date = raw_date
                     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
                         try:
-                            match_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
-                            break
+                    match_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+                    break
                         except ValueError:
                             continue
                 if len(parts) > 4:
@@ -294,7 +318,10 @@ def dvw_rallies_to_df(file_content: str) -> pd.DataFrame:
     # -------------------------------------------------------------------------
     # 5) make dataframe
     # -------------------------------------------------------------------------
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty and "match_date" in df.columns:
+        df["match_date"] = df["match_date"].apply(normalize_date_str)
+    return df
 
 
 def update_database(folder_ids: list[str], progress_callback=None):
@@ -345,6 +372,9 @@ def update_database(folder_ids: list[str], progress_callback=None):
             # Add file metadata
             df_temp['file_id'] = f['id']
             df_temp['file_name'] = f['name']
+            # Normalize date format to YYYY-MM-DD
+            if "match_date" in df_temp.columns:
+                df_temp["match_date"] = df_temp["match_date"].apply(normalize_date_str)
             
             # --- Apply Manual Fixes (Reggio Emilia) ---
             TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
@@ -394,6 +424,9 @@ def load_data_from_db() -> pd.DataFrame:
     df = fetch_all_rallies()
     
     if not df.empty:
+        # Normalize date format to YYYY-MM-DD
+        if "match_date" in df.columns:
+            df["match_date"] = df["match_date"].apply(normalize_date_str)
         # Sort as requested
         # We need to ensure columns are correct types
         # rally_idx is int

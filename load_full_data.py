@@ -13,6 +13,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def normalize_date_str(date_val) -> str | None:
+    if date_val is None or pd.isna(date_val):
+        return None
+    date_str = str(date_val).strip()
+    if not date_str:
+        return None
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    for fmt in ("%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
+    if pd.isna(parsed):
+        return date_str
+    return parsed.date().isoformat()
+
+
 def list_files_sorted(dir_path):
     """Return a sorted list of filenames in a directory."""
     return sorted(
@@ -212,7 +233,7 @@ def _try_parse_date(date_string: str) -> str:
             return datetime.strptime(date_string, fmt).strftime("%Y-%m-%d")
         except (ValueError, TypeError):
             continue
-    return date_string
+    return normalize_date_str(date_string) or date_string
 
 
 def extract_match_date_and_type(path: str) -> Tuple[Optional[str], Optional[str]]:
@@ -362,7 +383,7 @@ def process_dv_file(path: str) -> pd.DataFrame:
     # match-level info
     match_date_str, match_type = extract_match_date_and_type(path)
 
-    df["match_date"] = match_date_str
+    df["match_date"] = normalize_date_str(match_date_str)
     df["match_type"] = match_type
 
     # build alternative id (match identifier based on date and team IDs)
@@ -527,6 +548,8 @@ def process_dv_file_content(file_content: str | bytes, file_name: str = "temp.dv
 
         # Process
         df = process_dv_file(temp_path)
+        if not df.empty and "match_date" in df.columns:
+            df["match_date"] = df["match_date"].apply(normalize_date_str)
         return df
 
 import streamlit as st
@@ -584,6 +607,9 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
             # Add file metadata
             df_temp['file_id'] = f['id']
             df_temp['file_name'] = f['name']
+            # Normalize date format to YYYY-MM-DD
+            if "match_date" in df_temp.columns:
+                df_temp["match_date"] = df_temp["match_date"].apply(normalize_date_str)
             
             # --- Apply Manual Fixes (Reggio Emilia) ---
             # Copied from concat_align_and_save logic
@@ -713,6 +739,9 @@ def load_full_data_from_db() -> pd.DataFrame:
     df = fetch_all_touches()
     
     if not df.empty:
+        # Normalize date format to YYYY-MM-DD
+        if "match_date" in df.columns:
+            df["match_date"] = df["match_date"].apply(normalize_date_str)
         # Apply global fix if needed (though we fix on upload, legacy data might need it)
         TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
         if "home_team" in df.columns and "visiting_team" in df.columns:
@@ -763,6 +792,9 @@ def load_match_data_from_db(match_id: str) -> pd.DataFrame:
     df = fetch_touches_by_match_id(match_id)
     
     if not df.empty:
+        # Normalize date format to YYYY-MM-DD
+        if "match_date" in df.columns:
+            df["match_date"] = df["match_date"].apply(normalize_date_str)
         # Apply global fix if needed
         TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
         if "home_team" in df.columns and "visiting_team" in df.columns:
