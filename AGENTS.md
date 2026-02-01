@@ -2,10 +2,11 @@
 
 ## Project Structure & Module Organization
 
-- Top-level scripts handle ingestion, modeling, and simulation (`load_data.py`, `load_full_data.py`, `analysis_regr.py`, `simulator.py`, `app.py`).
+- Top-level scripts handle ingestion via wrappers (`scripts/load_data.py`, `scripts/load_full_data.py`) and the app (`app.py`); domain logic lives under `dvolley/domain/`.
 - Raw `.dvw` exports live in `data/`, but the app uses Supabase as the source of truth (no local CSV params).
-- DB utilities live in `dvolley/services/db.py`, with Supabase wiring in `database_connection.py`.
-- Maintenance scripts: `dvolley/cli/main.py` provides `reset-db` and `normalize-dates` commands (wrappers remain in repo root).
+- DB utilities live in `dvolley/services/db.py`, with Supabase wiring in `dvolley/services/database_connection.py`.
+- Maintenance scripts: `dvolley/cli/main.py` provides `reset-db`, `normalize-dates`, and `fit-model` commands.
+- Architecture overview lives in `ARCHITECTURE.md`.
 
 ## Build, Test, and Development Commands
 
@@ -14,7 +15,6 @@
 - `.\.venv\Scripts\python -m dvolley.cli.main reset-db --confirm`: wipe `rally_level_data` and `touch_level_data`, then reload from Google Drive.
 - `.\.venv\Scripts\python -m dvolley.cli.main normalize-dates --only-match-alt`: rebuild `match_alternative_id` using normalized dates.
 - `.\.venv\Scripts\python -m dvolley.cli.main fit-model --alpha 0.001 --out params_out_break_sideout.csv`: fit parameters from DB and save a CSV.
-- `.\.venv\Scripts\python run_simulations.py`: sweep all rotation pairs and write `rotation_win_probs.csv`.
 
 ## Coding Style & Naming Conventions
 
@@ -23,7 +23,7 @@
 
 ## Testing Guidelines
 
-- No dedicated test suite is present. When adding tests, prefer `pytest` under `tests/` with names like `test_simulator.py`.
+- Tests live under `tests/` and run with `.\.venv\Scripts\python -m pytest tests/unit -q`.
 - Before PRs, run the Streamlit app paths you changed and confirm DB reads still work.
 
 ## Commit & Pull Request Guidelines

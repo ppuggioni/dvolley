@@ -3,8 +3,8 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
-from simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
+from dvolley.domain.analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
+from dvolley.domain.simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
 from dvolley.config import DEFAULT_ALPHA
 
 

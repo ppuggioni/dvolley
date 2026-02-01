@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
-from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
+from dvolley.domain.analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
 
 class BaseModel(ABC):
     @abstractmethod

@@ -3,7 +3,7 @@ import logging
 
 import pandas as pd
 
-from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
+from dvolley.domain.analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
 from dvolley.services.data_loader import update_database, update_database_full, load_data_from_db
 from dvolley.services.db import delete_all_rallies, delete_all_touches
 from dvolley.services.maintenance import normalize_dates

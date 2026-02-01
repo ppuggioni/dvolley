@@ -2,7 +2,7 @@ import logging
 
 import pandas as pd
 
-from database_connection import supabase
+from dvolley.services.database_connection import supabase
 from dvolley.data.normalization import normalize_date_str
 from dvolley.services.db import fetch_all_rallies, fetch_all_touches
 

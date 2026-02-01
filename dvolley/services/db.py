@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from database_connection import supabase
+from dvolley.services.database_connection import supabase
 
 logger = logging.getLogger(__name__)
 

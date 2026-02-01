@@ -8,21 +8,18 @@
 - fit logistic-regression and Bayesian breakpoint/sideout models with time decay and constrained parameters
 - run fast parameter-driven point-by-point simulators (CLI or Python API) that mirror the models
 - explore 6x6 rotation grids interactively in Streamlit to answer practical coaching questions
+- See `ARCHITECTURE.md` for the end-to-end data/model/app flow.
 
 ## Repository layout
 
 | Path | Description |
 | --- | --- |
 | `app.py` | Streamlit rotation simulator that exposes sliders for global/team/rotation parameters and renders win-probability matrices. |
-| `simulator.py` | `VolleyballPointByPointSimulator` and `VolleyballProbabilitySimulator`, i.e. the deterministic simulation core shared by the app and scripts. |
-| `run_simulations.py` | Example CLI utility that sweeps all 6x6 starting rotations and writes `rotation_win_probs.csv`. |
-| `analysis_regr.py` | Logistic-regression (`scikit-learn`) model that produces breakpoint/sideout parameters. |
-| `analysis.py` | Bayesian (`pymc`) serve-receive model for deeper analyses and posterior visualisation. |
-| `load_data.py` | Lightweight DVW parser that converts every rally into tabular rows for Supabase upload. |
-| `load_full_data.py` | Full scout parser (touch-level) built on `datavolley`, also uploaded to Supabase. |
+| `dvolley/domain/` | Core modeling + simulation (`analysis_regr.py`, `simulator.py`, `models.py`, `backtest_engine.py`). |
+| `dvolley/services/` | Supabase and Google Drive integration (`db.py`, `database_connection.py`, `gdrive_utils.py`). |
+| `scripts/` | Thin wrappers around the service layer (`load_data.py`, `load_full_data.py`). |
 | `data/` | Drop raw `.dvw` exports here (sample files are included). |
-| `reset_and_reload_db.py` | Wrapper for `dvolley.cli.main reset-db` (wipe + reload). |
-| `normalize_db_dates.py` | Wrapper for `dvolley.cli.main normalize-dates` (normalize dates/IDs). |
+| `dvolley/cli/main.py` | CLI entrypoint (reset DB, normalize dates, fit model). |
 | `requirements.txt` | Minimal dependencies for the Streamlit app and regression workflow. |
 
 ## Getting started
@@ -34,46 +31,39 @@
     python -m venv .venv
     .venv\Scripts\activate  # or source .venv/bin/activate on macOS/Linux
     pip install -r requirements.txt
-    pip install pymc arviz pytensor datavolley  # optional: needed for analysis.py / load_full_data.py
+    pip install pymc arviz pytensor datavolley  # optional: needed for Bayesian analysis / load_full_data.py
     ```
 
-3. Configure Supabase and Google Drive credentials in `st.secrets` (see `database_connection.py` and `gdrive_utils.py`).
+3. Configure Supabase and Google Drive credentials in `st.secrets` (see `dvolley/services/database_connection.py` and `dvolley/services/gdrive_utils.py`).
 
 ## Typical workflow
 
 1. Use the Streamlit **Data Management** page to sync new `.dvw` files from Google Drive into Supabase.
 2. Fit the logistic model inside the app (alpha=0.001) to populate in-memory parameters.
 3. Launch the Streamlit app (`streamlit run app.py`) to explore rotations with the latest parameters.
-4. Optionally use `run_simulations.py` or the simulator classes directly for batch analysis.
+4. Optionally use the simulator classes directly for batch analysis.
 
 ## Data preparation
 
 ### `load_data.py`
 
-- `dvw_rallies_to_df` reads CP1252 DVW text exports, tracks setter rotations, and emits one row per rally with scoreboard pre/post states.
-- `update_database(...)` uploads rally rows into Supabase; dates are normalized to `YYYY-MM-DD`.
+- `scripts/load_data.py` wraps `dvolley.services.data_loader.update_database(...)` and uploads rally rows into Supabase; dates are normalized to `YYYY-MM-DD`.
 
 Key columns include `match_type`, `match_date`, `team_id_h`, `team_id_a`, `team_h`, `team_a`, `set_number`, `pre/post_set_won_*`, `pre/post_point_won_*`, `p_h`, `p_a`, `point_won_team`, `serve_team`, and `serve_h/serve_a`.
 
 ### `load_full_data.py`
 
-When you need the entire scout (skills, video time, etc.), use the richer parser that leverages `datavolley` and uploads to Supabase via `update_database_full(...)`.
+When you need the entire scout (skills, video time, etc.), use `scripts/load_full_data.py`, which wraps `dvolley.services.data_loader.update_database_full(...)`.
 
 ## Modeling
 
-### Logistic baseline (`analysis_regr.py`)
+### Logistic baseline (`dvolley/domain/analysis_regr.py`)
 
 `VolleyballBreakpointSideoutRegModelNoHome` ingests rally-level data from Supabase, applies exponential time decay, enforces sum-to-zero constraints for teams/rotations, and fits a constrained logistic regression through `SGDClassifier`. The app exposes a one-click refit (alpha=0.001) and stores parameters in memory.
 
-### Bayesian serve-receive model (`analysis.py`)
+### Bayesian serve-receive model
 
-`VolleyballServeReceiveModel` mirrors the same breakpoint/sideout structure but expresses it in PyMC, producing posterior samples and visualisations (via `arviz`). Because it is heavier, install `pymc`, `arviz`, and `pytensor`, then execute:
-
-```powershell
-python analysis.py
-```
-
-Set `csv_path` inside the `__main__` section if you want to point at a different cleaned dataset.
+The Bayesian serve-receive workflow is optional and not part of the default repo scripts. If you need it, add a dedicated script in a `scripts/` folder and install `pymc`, `arviz`, and `pytensor`.
 
 ## Database utilities
 
@@ -114,18 +104,10 @@ Use this page to compare rotations, test hypothetical parameter tweaks, or sanit
 
 ## Command-line rotation grid & simulator API
 
-For scripted analysis, edit the IDs in `run_simulations.py` and run:
-
-```powershell
-python run_simulations.py
-```
-
-It sweeps every home/away starting rotation pair, calls into `VolleyballPointByPointSimulator`/`VolleyballProbabilitySimulator`, prints the matrix, and writes `rotation_win_probs.csv`.
-
-You can also import `simulator.py` directly from notebooks:
+For scripted analysis, import `dvolley/domain/simulator.py` directly from notebooks:
 
 ```python
-from simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
+from dvolley.domain.simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
 
 base = VolleyballPointByPointSimulator(best_of=5)
 base.load_parameters(global_df, team_home_df, team_away_df)
@@ -136,7 +118,7 @@ print(prob.home_win_analytical_calculations())
 
 That API makes it easy to simulate arbitrary game states, reseed rotations mid-set, or run Monte Carlo experiments beyond the canned grid.
 
-## Data dictionary (clean_data/clean_data.csv)
+## Data dictionary (rally-level schema)
 
 - `match_type`, `match_date`: metadata pulled from the DVW header.
 - `team_id_h`, `team_id_a`, `team_h`, `team_a`: Data Volley identifiers and labels for the home/away teams.
@@ -151,6 +133,6 @@ That API makes it easy to simulate arbitrary game states, reseed rotations mid-s
 
 - If the app says no parameters are fitted, load data from the DB and click **Fit model (alpha=0.001)**.
 - The loaders assume UTF-8/CP1252 DVW text files. If Data Volley exports a new format, adjust `dvw_rallies_to_df` accordingly.
-- `analysis_regr.py` expects every row to have `serve_team` and rotation columns; drop rallies with missing setters before fitting.
-- Bayesian runs (`analysis.py`) can take a while; start with fewer draws or a subset of the data if you only need sanity checks.
+- `dvolley/domain/analysis_regr.py` expects every row to have `serve_team` and rotation columns; drop rallies with missing setters before fitting.
+- Bayesian runs can take a while; start with fewer draws or a subset of the data if you only need sanity checks.
 - Keep raw data under `data/` and generated artefacts (e.g., `rotation_win_probs.csv`) out of version control if files are large or sensitive.
