@@ -56,10 +56,3 @@ Desktop.ini
 *.log
 
 
-# ---- Data ----
-
-# ---- Backtest/Analysis Results (outputs, plots, CSVs) ----
-backtest_results/
-backtest_loocv_results/
-loocv_calibration_results/
-mantova_loocv_results/
