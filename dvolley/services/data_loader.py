@@ -5,12 +5,12 @@ from typing import Optional
 
 import pandas as pd
 
-from dvolley.data.dvw_parser import dvw_rallies_to_df
-from dvolley.data.full_parser import process_dv_file_content
-from dvolley.data.normalization import normalize_date_str
-from dvolley.services import db
-from dvolley.config import TEAM_NAME_TO_FIX, SQL_ORDERED_COLS
-from dvolley.services.gdrive import list_files_in_folder, read_file_content
+from ..data.dvw_parser import dvw_rallies_to_df
+from ..data.full_parser import process_dv_file_content
+from ..data.normalization import normalize_date_str
+from ..services import db
+from ..config import TEAM_NAME_TO_FIX, SQL_ORDERED_COLS
+from ..services.gdrive import list_files_in_folder, read_file_content
 
 logger = logging.getLogger(__name__)
 
