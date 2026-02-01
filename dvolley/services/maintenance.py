@@ -1,29 +1,36 @@
-import argparse
 import logging
-from typing import Optional
 
 import pandas as pd
 
-from database_connection import supabase
-from db_utils import fetch_all_rallies, fetch_all_touches
+from dvolley.services.database_connection import supabase
+from dvolley.data.normalization import normalize_date_str
+from dvolley.services.db import fetch_all_rallies, fetch_all_touches
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def normalize_date_str(date_val) -> Optional[str]:
-    if date_val is None or pd.isna(date_val):
-        return None
-    date_str = str(date_val).strip()
-    if not date_str:
-        return None
-    try:
-        return pd.to_datetime(date_str, errors="coerce", dayfirst=True).date().isoformat()
-    except Exception:
-        return date_str
+def normalize_dates(only_match_alt: bool = False, dry_run: bool = False) -> None:
+    update_date = not only_match_alt
+    update_match_alt = True
+
+    rally_updated = _update_rally_dates(
+        dry_run=dry_run,
+        update_date=update_date,
+        update_match_alt=update_match_alt,
+    )
+    touch_updated = _update_touch_dates(
+        dry_run=dry_run,
+        update_date=update_date,
+        update_match_alt=update_match_alt,
+    )
+
+    if dry_run:
+        logger.info("Dry run complete. Rally updates: %s, Touch updates: %s", rally_updated, touch_updated)
+    else:
+        logger.info("Update complete. Rally updates: %s, Touch updates: %s", rally_updated, touch_updated)
 
 
-def update_rally_dates(
+def _update_rally_dates(
     dry_run: bool = False,
     update_date: bool = True,
     update_match_alt: bool = True,
@@ -52,6 +59,7 @@ def update_rally_dates(
         )
     else:
         df["match_alt_norm"] = None
+
     to_fix = df[df["match_date_str"] != df["match_date_norm_str"]]
     to_fix_alt = df[
         (df["match_alt_norm"].notna())
@@ -63,7 +71,6 @@ def update_rally_dates(
     logger.info("Rally rows needing match_alternative_id update: %s", len(to_fix_alt))
     updated = 0
 
-    # Update match_date (and match_alternative_id if needed) using file_id + rally_idx
     for _, row in df.iterrows():
         file_id = row.get("file_id")
         rally_idx = row.get("rally_idx")
@@ -98,19 +105,19 @@ def update_rally_dates(
         if needs_alt:
             update_payload["match_alternative_id"] = new_match_alt
 
-        query = (
+        (
             supabase.table("rally_level_data")
             .update(update_payload)
             .eq("file_id", file_id)
             .eq("rally_idx", rally_idx)
+            .execute()
         )
-        query.execute()
         updated += 1
 
     return updated
 
 
-def update_touch_dates(
+def _update_touch_dates(
     dry_run: bool = False,
     update_date: bool = True,
     update_match_alt: bool = True,
@@ -139,6 +146,7 @@ def update_touch_dates(
         )
     else:
         df["match_alt_norm"] = None
+
     to_fix = df[df["match_date_str"] != df["match_date_norm_str"]]
     to_fix_alt = df[
         (df["match_alt_norm"].notna())
@@ -150,7 +158,6 @@ def update_touch_dates(
     logger.info("Touch rows needing match_alternative_id update: %s", len(to_fix_alt))
     updated = 0
 
-    # Update match_date (and match_alternative_id if needed) using unique_row_id
     for _, row in df.iterrows():
         unique_row_id = row.get("unique_row_id")
         new_date = row.get("match_date_norm")
@@ -181,46 +188,12 @@ def update_touch_dates(
         if needs_alt:
             update_payload["match_alternative_id"] = new_match_alt
 
-        query = (
+        (
             supabase.table("touch_level_data")
             .update(update_payload)
             .eq("unique_row_id", unique_row_id)
+            .execute()
         )
-        query.execute()
         updated += 1
 
     return updated
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Normalize DB match_date to YYYY-MM-DD.")
-    parser.add_argument("--dry-run", action="store_true", help="Count rows but do not update.")
-    parser.add_argument(
-        "--only-match-alt",
-        action="store_true",
-        help="Update match_alternative_id only (skip match_date updates).",
-    )
-    args = parser.parse_args()
-
-    update_date = not args.only_match_alt
-    update_match_alt = True
-
-    rally_updated = update_rally_dates(
-        dry_run=args.dry_run,
-        update_date=update_date,
-        update_match_alt=update_match_alt,
-    )
-    touch_updated = update_touch_dates(
-        dry_run=args.dry_run,
-        update_date=update_date,
-        update_match_alt=update_match_alt,
-    )
-
-    if args.dry_run:
-        logger.info("Dry run complete. Rally updates: %s, Touch updates: %s", rally_updated, touch_updated)
-    else:
-        logger.info("Update complete. Rally updates: %s, Touch updates: %s", rally_updated, touch_updated)
-
-
-if __name__ == "__main__":
-    main()
