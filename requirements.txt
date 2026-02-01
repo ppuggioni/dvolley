@@ -13,3 +13,4 @@ matplotlib
 pymc
 arviz
 pytensor
+pytest

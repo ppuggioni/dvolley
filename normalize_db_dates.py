@@ -6,21 +6,10 @@ import pandas as pd
 
 from database_connection import supabase
 from db_utils import fetch_all_rallies, fetch_all_touches
+from dvolley.data.normalization import normalize_date_str
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def normalize_date_str(date_val) -> Optional[str]:
-    if date_val is None or pd.isna(date_val):
-        return None
-    date_str = str(date_val).strip()
-    if not date_str:
-        return None
-    try:
-        return pd.to_datetime(date_str, errors="coerce", dayfirst=True).date().isoformat()
-    except Exception:
-        return date_str
 
 
 def update_rally_dates(
