@@ -5,7 +5,7 @@ from typing import Optional
 import pandas as pd
 
 from database_connection import supabase
-from db_utils import fetch_all_rallies, fetch_all_touches
+from dvolley.services.db import fetch_all_rallies, fetch_all_touches
 from dvolley.data.normalization import normalize_date_str
 
 logging.basicConfig(level=logging.INFO)

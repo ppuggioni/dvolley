@@ -3,7 +3,7 @@ import logging
 
 import streamlit as st
 
-from db_utils import delete_all_rallies, delete_all_touches
+from dvolley.services.db import delete_all_rallies, delete_all_touches
 from load_data import update_database
 from load_full_data import update_database_full
 
