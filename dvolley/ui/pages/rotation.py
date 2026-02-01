@@ -512,29 +512,9 @@ def run_simulation_and_store():
 
 
 def show_square_matrix(styled, df_display):
-    html = styled.to_html()
-    st.markdown(
-        f"""
-        <style>
-        .table-container {{
-            max-width: 100%;
-            overflow-x: auto;
-        }}
-        table {{
-            border-collapse: collapse;
-            width: 100%;
-        }}
-        th, td {{
-            text-align: center;
-            padding: 8px;
-        }}
-        th {{
-            background-color: #f0f0f0;
-        }}
-        </style>
-        <div class="table-container">{html}</div>
-        """,
-        unsafe_allow_html=True,
+    st.dataframe(
+        styled,
+        use_container_width=True,
     )
 
 
@@ -544,7 +524,7 @@ def prepare_pivot_for_display(pivot: pd.DataFrame, away_label: str) -> pd.DataFr
     display.columns = display.columns.astype(str)
     display.rename(columns={"0": "AVG"}, inplace=True)
     display.rename(index={"0": "AVG"}, inplace=True)
-    display = display.rename(columns=lambda x: f"{away_label} {x}" if x != "AVG" else "AVG")
+    display.index.name = ""
     return display
 
 
@@ -662,24 +642,24 @@ def _get_color_style(v: float) -> str:
 
 def page_rotation_main(loader, last_match_date: Optional[str] = None):
     fitted_params_df = get_fitted_params_df()
-    if fitted_params_df is None:
+    active_model = st.session_state.get("active_model")
+    if fitted_params_df is None and not active_model:
         st.title("Rotation simulator")
         if last_match_date:
             st.info(f"Last match date in DB: {last_match_date}")
-        st.warning("No parameters fitted yet. Please fit the model to continue.")
-        if st.button(f"Fit model (alpha={DEFAULT_ALPHA})"):
-            if loader.data is None or loader.data.empty:
-                st.error("No rally data loaded yet. Please load data from the database first.")
-            else:
-                with st.spinner("Refitting model..."):
-                    params_df = refit_model_on_current_data(loader.data, alpha=DEFAULT_ALPHA)
-                    st.session_state["fitted_params_df"] = params_df
-                    st.success("Model refitted. You can now use the rotation simulator.")
-                    st.rerun()
+        st.warning("No parameters fitted yet. Go to **Setup & Status** to load data and fit the model.")
         return
+    if fitted_params_df is None and active_model:
+        sim_params = active_model.get("params", {})
+        if sim_params.get("type") == "logistic":
+            fitted_params_df = sim_params.get("params")
 
-    team_params_df = get_team_params(fitted_params_df)
-    global_breakpoint_default = get_global_breakpoint_default(fitted_params_df)
+    team_params_df = get_team_params(fitted_params_df) if fitted_params_df is not None else pd.DataFrame()
+    global_breakpoint_default = (
+        get_global_breakpoint_default(fitted_params_df)
+        if fitted_params_df is not None
+        else 0.0
+    )
 
     rotation_simulator_controls_in_sidebar(team_params_df, global_breakpoint_default)
 

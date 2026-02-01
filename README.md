@@ -38,7 +38,7 @@
 
 ## Typical workflow
 
-1. Use the Streamlit **Data Management** page to sync new `.dvw` files from Google Drive into Supabase.
+1. Use the Streamlit **Setup & Status** page to sync new `.dvw` files from Google Drive into Supabase.
 2. Fit the logistic model inside the app (alpha=0.001) to populate in-memory parameters.
 3. Launch the Streamlit app (`streamlit run app.py`) to explore rotations with the latest parameters.
 4. Optionally use the simulator classes directly for batch analysis.

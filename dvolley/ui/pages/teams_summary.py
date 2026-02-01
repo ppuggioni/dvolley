@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-from .rotation import get_fitted_params_df, get_team_params, style_param_table, refit_model_on_current_data
-from dvolley.config import DEFAULT_ALPHA
+from .rotation import get_fitted_params_df, get_team_params, style_param_table
 
 
 def page_teams_summary(loader, last_match_date: str | None = None):
@@ -95,16 +94,7 @@ def page_teams_summary(loader, last_match_date: str | None = None):
     if fitted_params_df is None:
         if last_match_date:
             st.info(f"Last match date in DB: {last_match_date}")
-        st.warning("No parameters fitted yet. Please fit the model to continue.")
-        if st.button(f"Fit model (alpha={DEFAULT_ALPHA})"):
-            if loader.data is None or loader.data.empty:
-                st.error("No rally data loaded yet. Please load data from the database first.")
-            else:
-                with st.spinner("Refitting model..."):
-                    params_df = refit_model_on_current_data(loader.data, alpha=DEFAULT_ALPHA)
-                    st.session_state["fitted_params_df"] = params_df
-                    st.success("Model refitted. You can now view team summaries.")
-                    st.rerun()
+        st.warning("No parameters fitted yet. Go to **Setup & Status** to load data and fit the model.")
         return
 
     team_params_df = get_team_params(fitted_params_df)

@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from dvolley.services.data_loader import load_data_from_db
-from dvolley.ui.pages.load_data import page_load_data
 from dvolley.ui.pages.model_analysis import page_model_analysis
 from dvolley.ui.pages.rotation import page_rotation_main
 from dvolley.ui.pages.teams_summary import page_teams_summary
@@ -18,11 +17,11 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-PAGE_ROTATION = "rotation_simulator"
-PAGE_TEAMS_SUMMARY = "teams_summary"
-PAGE_LOAD_DATA = "load_data"
-PAGE_MODEL_ANALYSIS = "model_analysis"
-PAGE_WIP = "work in progress"
+PAGE_SETUP = "Setup & Status"
+PAGE_ROTATION = "Rotation Simulator"
+PAGE_TEAMS_SUMMARY = "Teams Summary"
+PAGE_MODEL_ANALYSIS = "Model Analysis"
+PAGE_WIP = "Work in Progress"
 
 
 class BackgroundLoader:
@@ -97,7 +96,7 @@ def main():
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(
         "Select page",
-        options=[PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_MODEL_ANALYSIS, PAGE_LOAD_DATA, PAGE_WIP],
+        options=[PAGE_SETUP, PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_MODEL_ANALYSIS, PAGE_WIP],
         index=0,
     )
 
@@ -105,14 +104,15 @@ def main():
 
     st.session_state["perform_load_async"] = perform_load_async
 
-    if page == PAGE_ROTATION:
+    if page == PAGE_SETUP:
+        from dvolley.ui.pages.setup import page_setup_status
+        page_setup_status(loader, last_match_date=last_match_date)
+    elif page == PAGE_ROTATION:
         page_rotation_main(loader, last_match_date=last_match_date)
     elif page == PAGE_TEAMS_SUMMARY:
         page_teams_summary(loader, last_match_date=last_match_date)
     elif page == PAGE_MODEL_ANALYSIS:
         page_model_analysis()
-    elif page == PAGE_LOAD_DATA:
-        page_load_data(loader, last_match_date=last_match_date)
     else:
         wip_page_main()
 
