@@ -9,6 +9,7 @@ from dvolley.data.dvw_parser import dvw_rallies_to_df
 from dvolley.data.full_parser import process_dv_file_content
 from dvolley.data.normalization import normalize_date_str
 from dvolley.services import db
+from dvolley.config import TEAM_NAME_TO_FIX, SQL_ORDERED_COLS
 from dvolley.services.gdrive import list_files_in_folder, read_file_content
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,6 @@ def load_data_from_db() -> pd.DataFrame:
         if existing_sort_cols:
             df = df.sort_values(by=existing_sort_cols).reset_index(drop=True)
 
-        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
         if "team_h" in df.columns and "team_a" in df.columns:
             affected_home = df[df["team_h"] == TEAM_NAME_TO_FIX]["team_id_h"].unique()
             affected_away = df[df["team_a"] == TEAM_NAME_TO_FIX]["team_id_a"].unique()
@@ -175,7 +175,6 @@ def update_database_full(folder_ids: list[str], progress_callback=None) -> list[
             if "match_date" in df_temp.columns:
                 df_temp["match_date"] = df_temp["match_date"].apply(normalize_date_str)
 
-            TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
             if "home_team" in df_temp.columns and "visiting_team" in df_temp.columns:
                 affected_home = df_temp[df_temp["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
                 affected_away = df_temp[df_temp["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
@@ -281,7 +280,6 @@ def load_full_data_from_db() -> pd.DataFrame:
     df = db.fetch_all_touches()
 
     if not df.empty:
-        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
         if "home_team" in df.columns and "visiting_team" in df.columns:
             affected_home = df[df["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
             affected_away = df[df["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
@@ -313,74 +311,6 @@ def load_full_data_from_db() -> pd.DataFrame:
         if existing_sort_cols:
             df = df.sort_values(by=existing_sort_cols).reset_index(drop=True)
 
-        SQL_ORDERED_COLS = [
-            "unique_row_id",
-            "match_id",
-            "match_alternative_id",
-            "match_type",
-            "match_date",
-            "home_team_id",
-            "home_team",
-            "visiting_team_id",
-            "visiting_team",
-            "set_number",
-            "home_team_score",
-            "visiting_team_score",
-            "rally_number",
-            "point_won_by",
-            "serving_team",
-            "receiving_team",
-            "setter_position",
-            "home_setter_position",
-            "visiting_setter_position",
-            "possession_number",
-            "video_time",
-            "code",
-            "custom_code",
-            "point_phase",
-            "attack_phase",
-            "team",
-            "player_id",
-            "player_name",
-            "player_number",
-            "skill",
-            "skill_type",
-            "skill_subtype",
-            "evaluation_code",
-            "attack_code",
-            "set_code",
-            "set_type",
-            "start_zone",
-            "end_zone",
-            "end_subzone",
-            "num_players_numeric",
-            "start_coordinate",
-            "mid_coordinate",
-            "end_coordinate",
-            "start_coordinate_x",
-            "start_coordinate_y",
-            "mid_coordinate_x",
-            "mid_coordinate_y",
-            "end_coordinate_x",
-            "end_coordinate_y",
-            "home_p1",
-            "home_p2",
-            "home_p3",
-            "home_p4",
-            "home_p5",
-            "home_p6",
-            "visiting_p1",
-            "visiting_p2",
-            "visiting_p3",
-            "visiting_p4",
-            "visiting_p5",
-            "visiting_p6",
-            "file_id",
-            "file_name",
-            "created_by",
-            "create_datetime",
-        ]
-
         cols_to_use = [c for c in SQL_ORDERED_COLS if c in df.columns]
         extra_cols = [c for c in df.columns if c not in cols_to_use]
         df = df[cols_to_use + extra_cols]
@@ -396,7 +326,6 @@ def load_match_data_from_db(match_id: str) -> pd.DataFrame:
     df = db.fetch_touches_by_match_id(match_id)
 
     if not df.empty:
-        TEAM_NAME_TO_FIX = "Conad Reggio Emilia"
         if "home_team" in df.columns and "visiting_team" in df.columns:
             affected_home = df[df["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
             affected_away = df[df["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
@@ -416,74 +345,6 @@ def load_match_data_from_db(match_id: str) -> pd.DataFrame:
             df = df.sort_values(by=["unique_row_id"]).reset_index(drop=True)
         elif "rally_number" in df.columns:
             df = df.sort_values(by=["rally_number"]).reset_index(drop=True)
-
-        SQL_ORDERED_COLS = [
-            "unique_row_id",
-            "match_id",
-            "match_alternative_id",
-            "match_type",
-            "match_date",
-            "home_team_id",
-            "home_team",
-            "visiting_team_id",
-            "visiting_team",
-            "set_number",
-            "home_team_score",
-            "visiting_team_score",
-            "rally_number",
-            "point_won_by",
-            "serving_team",
-            "receiving_team",
-            "setter_position",
-            "home_setter_position",
-            "visiting_setter_position",
-            "possession_number",
-            "video_time",
-            "code",
-            "custom_code",
-            "point_phase",
-            "attack_phase",
-            "team",
-            "player_id",
-            "player_name",
-            "player_number",
-            "skill",
-            "skill_type",
-            "skill_subtype",
-            "evaluation_code",
-            "attack_code",
-            "set_code",
-            "set_type",
-            "start_zone",
-            "end_zone",
-            "end_subzone",
-            "num_players_numeric",
-            "start_coordinate",
-            "mid_coordinate",
-            "end_coordinate",
-            "start_coordinate_x",
-            "start_coordinate_y",
-            "mid_coordinate_x",
-            "mid_coordinate_y",
-            "end_coordinate_x",
-            "end_coordinate_y",
-            "home_p1",
-            "home_p2",
-            "home_p3",
-            "home_p4",
-            "home_p5",
-            "home_p6",
-            "visiting_p1",
-            "visiting_p2",
-            "visiting_p3",
-            "visiting_p4",
-            "visiting_p5",
-            "visiting_p6",
-            "file_id",
-            "file_name",
-            "created_by",
-            "create_datetime",
-        ]
 
         existing_cols = [c for c in SQL_ORDERED_COLS if c in df.columns]
         df = df[existing_cols]

@@ -8,6 +8,7 @@ from dvolley.services.data_loader import (
     update_database,
 )
 from dvolley.ui.pages.rotation import refit_model_on_current_data
+from dvolley.config import DEFAULT_ALPHA
 
 
 def page_load_data(loader, last_match_date: str | None = None):
@@ -139,7 +140,7 @@ def page_load_data(loader, last_match_date: str | None = None):
 
         st.divider()
 
-        st.markdown("### Fit Model (alpha=0.001)")
+        st.markdown(f"### Fit Model (alpha={DEFAULT_ALPHA})")
         if last_match_date:
             st.caption(f"Last match date in DB: {last_match_date}")
 
@@ -148,10 +149,10 @@ def page_load_data(loader, last_match_date: str | None = None):
         else:
             st.info("📁 Currently using **default** parameters (from CSV file)")
 
-        if st.button("Fit model (alpha=0.001)"):
+        if st.button(f"Fit model (alpha={DEFAULT_ALPHA})"):
             with st.spinner("Refitting model... this may take a moment..."):
                 try:
-                    params_df = refit_model_on_current_data(df)
+                    params_df = refit_model_on_current_data(df, alpha=DEFAULT_ALPHA)
                     st.session_state["fitted_params_df"] = params_df
 
                     num_teams = len(params_df[params_df["par_type"] == "team"]["team_id"].unique())

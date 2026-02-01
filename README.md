@@ -21,8 +21,8 @@
 | `load_data.py` | Lightweight DVW parser that converts every rally into tabular rows for Supabase upload. |
 | `load_full_data.py` | Full scout parser (touch-level) built on `datavolley`, also uploaded to Supabase. |
 | `data/` | Drop raw `.dvw` exports here (sample files are included). |
-| `reset_and_reload_db.py` | Wipes Supabase tables and reloads everything from Google Drive. |
-| `normalize_db_dates.py` | Normalizes `match_date` and `match_alternative_id` in Supabase. |
+| `reset_and_reload_db.py` | Wrapper for `dvolley.cli.main reset-db` (wipe + reload). |
+| `normalize_db_dates.py` | Wrapper for `dvolley.cli.main normalize-dates` (normalize dates/IDs). |
 | `requirements.txt` | Minimal dependencies for the Streamlit app and regression workflow. |
 
 ## Getting started
@@ -77,8 +77,18 @@ Set `csv_path` inside the `__main__` section if you want to point at a different
 
 ## Database utilities
 
-- `reset_and_reload_db.py --confirm` wipes `rally_level_data` and `touch_level_data`, then reloads everything from Google Drive.
-- `normalize_db_dates.py --only-match-alt` fixes `match_alternative_id` from normalized dates and team IDs.
+- `.\.venv\Scripts\python -m dvolley.cli.main reset-db --confirm` wipes `rally_level_data` and `touch_level_data`, then reloads from Google Drive.
+- `.\.venv\Scripts\python -m dvolley.cli.main normalize-dates --only-match-alt` fixes `match_alternative_id` from normalized dates and team IDs.
+- `.\.venv\Scripts\python -m dvolley.cli.main fit-model --alpha 0.001` fits parameters from Supabase and writes a local CSV.
+
+## Configuration
+
+Central defaults live in `dvolley/config.py`:
+
+- `DEFAULT_ALPHA`: model refit alpha used by the Streamlit UI.
+- `DATE_FORMATS`: allowed input formats (DD/MM is enforced to prevent month/day swaps).
+- `TEAM_NAME_TO_FIX`: manual ID consolidation for a known team.
+- `SQL_ORDERED_COLS`: column ordering for touch-level exports.
 
 ## Streamlit rotation simulator
 

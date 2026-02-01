@@ -5,6 +5,7 @@ from typing import Optional
 
 from analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
 from simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
+from dvolley.config import DEFAULT_ALPHA
 
 
 POSITIONS = range(1, 7)
@@ -32,7 +33,7 @@ def get_global_breakpoint_default(df_all: pd.DataFrame) -> float:
 
 def refit_model_on_current_data(
     rally_df: pd.DataFrame,
-    alpha: float = 0.001,
+    alpha: float = DEFAULT_ALPHA,
 ) -> pd.DataFrame:
     model = VolleyballBreakpointSideoutRegModelNoHome(
         half_life_days=90.0,
@@ -666,12 +667,12 @@ def page_rotation_main(loader, last_match_date: Optional[str] = None):
         if last_match_date:
             st.info(f"Last match date in DB: {last_match_date}")
         st.warning("No parameters fitted yet. Please fit the model to continue.")
-        if st.button("Fit model (alpha=0.001)"):
+        if st.button(f"Fit model (alpha={DEFAULT_ALPHA})"):
             if loader.data is None or loader.data.empty:
                 st.error("No rally data loaded yet. Please load data from the database first.")
             else:
                 with st.spinner("Refitting model..."):
-                    params_df = refit_model_on_current_data(loader.data, alpha=0.001)
+                    params_df = refit_model_on_current_data(loader.data, alpha=DEFAULT_ALPHA)
                     st.session_state["fitted_params_df"] = params_df
                     st.success("Model refitted. You can now use the rotation simulator.")
                     st.rerun()
