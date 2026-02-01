@@ -1,9 +1,16 @@
 import logging
 import threading
 from typing import Optional
+import os
+import sys
 
 import pandas as pd
 import streamlit as st
+
+# Ensure local package imports work in Streamlit Cloud and local runs
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from dvolley.services.data_loader import load_data_from_db
 from dvolley.ui.pages.model_analysis import page_model_analysis
