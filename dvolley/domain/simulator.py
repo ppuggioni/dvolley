@@ -286,7 +286,7 @@ class VolleyballPointByPointSimulator:
                 sideout_team = params.get("sideout_team", {})
                 
                 p_break = break_team.get(s_id, global_mean)
-                p_sideout = sideout_team.get(r_id, global_mean)
+                p_sideout = sideout_team.get(r_id, 1 - global_mean)
                 
             elif level == "rotation":
                 break_pos = params.get("break_pos", {})
@@ -295,11 +295,11 @@ class VolleyballPointByPointSimulator:
                 # Keys in dict are (team_id, pos)
                 # Note: team_id in dicts are strings, pos are ints
                 p_break = break_pos.get((s_id, s_p), global_mean)
-                p_sideout = sideout_pos.get((r_id, r_p), global_mean)
+                p_sideout = sideout_pos.get((r_id, r_p), 1 - global_mean)
             else:
                 return global_mean
                 
-            return (p_break + p_sideout) / 2.0
+            return (p_break + (1 - p_sideout)) / 2.0
             
         return 0.5 # Fallback
 
@@ -511,6 +511,11 @@ class VolleyballProbabilitySimulator:
         new_sim.end_set = bs.end_set
         new_sim.end_rally_in_set = bs.end_rally_in_set
 
+        if hasattr(bs, "model_type"):
+            new_sim.model_type = bs.model_type
+        if hasattr(bs, "model_params"):
+            new_sim.model_params = bs.model_params
+
         return new_sim
 
     # ----------------------------------------------------------
@@ -563,11 +568,41 @@ class VolleyballProbabilitySimulator:
         target_points = 25 if cur_set < bs.best_of else 15
         cap = target_points + max_extra
 
-        gl = bs.global_logit
-        hp = bs.home_params
-        ap = bs.away_params
-
         def rally_prob(p_h: int, p_a: int, srv: str) -> float:
+            if getattr(bs, "model_type", "logistic") == "empirical":
+                params = getattr(bs, "model_params", {})
+                level = params.get("level", "global")
+                global_mean = params.get("global_mean", 0.5)
+
+                if srv == "h":
+                    s_id = bs.team_id_h
+                    r_id = bs.team_id_a
+                    s_p = p_h
+                    r_p = p_a
+                else:
+                    s_id = bs.team_id_a
+                    r_id = bs.team_id_h
+                    s_p = p_a
+                    r_p = p_h
+
+                if level == "team":
+                    break_team = params.get("break_team", {})
+                    sideout_team = params.get("sideout_team", {})
+                    p_break = break_team.get(s_id, global_mean)
+                    p_sideout = sideout_team.get(r_id, 1 - global_mean)
+                elif level == "rotation":
+                    break_pos = params.get("break_pos", {})
+                    sideout_pos = params.get("sideout_pos", {})
+                    p_break = break_pos.get((s_id, s_p), global_mean)
+                    p_sideout = sideout_pos.get((r_id, r_p), 1 - global_mean)
+                else:
+                    return global_mean
+
+                return (p_break + (1 - p_sideout)) / 2.0
+
+            gl = bs.global_logit
+            hp = bs.home_params
+            ap = bs.away_params
             logit = gl
             if srv == "h":
                 logit += hp["breakpoint_team_adjustment"]

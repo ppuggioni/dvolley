@@ -13,6 +13,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from dvolley.services.data_loader import load_data_from_db
+from dvolley.ui.pages.setup import fit_selected_model
 from dvolley.ui.pages.model_analysis import page_model_analysis
 from dvolley.ui.pages.rotation import page_rotation_main
 from dvolley.ui.pages.teams_summary import page_teams_summary
@@ -29,6 +30,7 @@ PAGE_ROTATION = "Rotation Simulator"
 PAGE_TEAMS_SUMMARY = "Teams Summary"
 PAGE_MODEL_ANALYSIS = "Model Analysis"
 PAGE_WIP = "Work in Progress"
+DEFAULT_AUTO_MODEL = "logistic_rotation_alpha_0.005"
 
 
 class BackgroundLoader:
@@ -38,6 +40,7 @@ class BackgroundLoader:
         self.thread = None
         self.error = None
         self.progress_text = ""
+        self.load_id = 0
 
     def start_loading(self):
         if not self.is_loading and self.data is None:
@@ -53,6 +56,8 @@ class BackgroundLoader:
         try:
             df = load_data_from_db()
             self.data = df
+            if df is not None:
+                self.load_id += 1
         except Exception as e:
             self.error = str(e)
         finally:
@@ -83,6 +88,7 @@ def get_last_match_date(df: Optional[pd.DataFrame]) -> Optional[str]:
 
 def main():
     st.set_page_config(page_title="Rotation App", layout="wide")
+    st.session_state.setdefault("fit_model_option", DEFAULT_AUTO_MODEL)
 
     perform_load_async()
 
@@ -93,6 +99,17 @@ def main():
         if "loaded_matches_df" not in st.session_state:
             st.session_state["loaded_matches_df"] = loader.data
         st.sidebar.success(f"✅ Data loaded ({len(loader.data)} rallies)")
+
+        last_fit_load_id = st.session_state.get("last_auto_fit_load_id")
+        if last_fit_load_id != loader.load_id:
+            selected_model = st.session_state.get("fit_model_option", DEFAULT_AUTO_MODEL)
+            try:
+                success = fit_selected_model(loader.data, selected_model, show_messages=False)
+                st.session_state["last_auto_fit_load_id"] = loader.load_id
+                st.session_state["auto_fit_error"] = None if success else "Auto-fit failed."
+            except Exception as e:
+                st.session_state["last_auto_fit_load_id"] = loader.load_id
+                st.session_state["auto_fit_error"] = str(e)
 
     st.sidebar.divider()
     if "fitted_params_df" in st.session_state:

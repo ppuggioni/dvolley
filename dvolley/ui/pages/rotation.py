@@ -95,6 +95,25 @@ def reset_team_sliders(prefix: str):
         st.session_state[f"{prefix}_pos{pos}_so_adjustment"] = 0.0
 
 
+def _get_empirical_team_ids(active_model: dict) -> list[str]:
+    params = active_model.get("params", {})
+    level = params.get("level", "global")
+    ids = set()
+    if level == "team":
+        ids.update(params.get("break_team", {}).keys())
+        ids.update(params.get("sideout_team", {}).keys())
+    elif level == "rotation":
+        ids.update(tid for (tid, _) in params.get("break_pos", {}).keys())
+        ids.update(tid for (tid, _) in params.get("sideout_pos", {}).keys())
+    return sorted({str(i) for i in ids})
+
+
+def _get_empirical_team_names(active_model: dict) -> dict:
+    params = active_model.get("params", {})
+    team_names = params.get("team_names", {})
+    return {str(k): str(v) for k, v in team_names.items()}
+
+
 def apply_team_preset_if_changed(
     prefix: str,
     selected_team_id: str | None,
@@ -202,6 +221,16 @@ def rotation_simulator_controls_in_sidebar(
         st.sidebar.success(f"Using Active Model: **{active_model['name']}**")
         if active_model["type"] == "empirical":
             st.sidebar.info("Empirical model selected. Parameters are fixed based on historical data.")
+            team_ids = _get_empirical_team_ids(active_model)
+            team_names = _get_empirical_team_names(active_model)
+            if team_ids and "team_h_current_team_id" not in st.session_state:
+                st.session_state["team_h_current_team_id"] = team_ids[0]
+                st.session_state["team_h_current_team_name"] = team_names.get(team_ids[0], team_ids[0])
+                st.session_state["team_a_current_team_id"] = team_ids[1] if len(team_ids) > 1 else team_ids[0]
+                st.session_state["team_a_current_team_name"] = team_names.get(
+                    team_ids[1] if len(team_ids) > 1 else team_ids[0],
+                    team_ids[1] if len(team_ids) > 1 else team_ids[0],
+                )
 
     if st.sidebar.button("APPLY", type="primary", width="stretch"):
         run_simulation_and_store()
@@ -230,6 +259,49 @@ def rotation_simulator_controls_in_sidebar(
         )
 
     if active_model and active_model["type"] == "empirical":
+        params = active_model.get("params", {})
+        level = params.get("level", "global")
+        team_ids = _get_empirical_team_ids(active_model)
+        team_names = _get_empirical_team_names(active_model)
+
+        st.sidebar.divider()
+        if level != "global" and team_ids:
+            st.sidebar.markdown("### Teams (empirical)")
+            current_h = st.session_state.get("team_h_current_team_id", team_ids[0])
+            current_a = st.session_state.get(
+                "team_a_current_team_id",
+                team_ids[1] if len(team_ids) > 1 else team_ids[0],
+            )
+            default_h_index = team_ids.index(current_h) if current_h in team_ids else 0
+            default_a_index = team_ids.index(current_a) if current_a in team_ids else (1 if len(team_ids) > 1 else 0)
+
+            def _fmt_team(tid: str) -> str:
+                name = team_names.get(str(tid), str(tid))
+                return f"{name} ({tid})"
+
+            team_h = st.sidebar.selectbox(
+                "Team H",
+                options=team_ids,
+                index=default_h_index,
+                format_func=_fmt_team,
+                key="team_h_empirical_select",
+            )
+            team_a = st.sidebar.selectbox(
+                "Team 2",
+                options=team_ids,
+                index=default_a_index,
+                format_func=_fmt_team,
+                key="team_a_empirical_select",
+            )
+        else:
+            st.sidebar.info("Empirical global model selected.")
+            team_h = "global"
+            team_a = "global"
+
+        st.session_state["team_h_current_team_id"] = team_h
+        st.session_state["team_h_current_team_name"] = team_names.get(team_h, team_h)
+        st.session_state["team_a_current_team_id"] = team_a
+        st.session_state["team_a_current_team_name"] = team_names.get(team_a, team_a)
         return
 
     slider_sidebar("Global breakpoint", key="global_breakpoint")

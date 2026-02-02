@@ -12,10 +12,10 @@ def page_teams_summary(loader, last_match_date: str | None = None):
 
     if active_model and active_model["type"] == "empirical":
         st.info(f"Using Active Model: **{active_model['name']}** (Empirical)")
-
         params = active_model["params"]
         level = params.get("level", "global")
         global_mean = params.get("global_mean", 0.5)
+        team_names = {str(k): str(v) for k, v in params.get("team_names", {}).items()}
 
         data = []
 
@@ -28,9 +28,9 @@ def page_teams_summary(loader, last_match_date: str | None = None):
                 data.append(
                     {
                         "team_id": t,
-                        "team_name": t,
+                        "team_name": team_names.get(str(t), str(t)),
                         "Breakpoint_Prob": break_team.get(t, global_mean),
-                        "Sideout_Prob": sideout_team.get(t, global_mean),
+                        "Sideout_Prob": sideout_team.get(t, 1 - global_mean),
                     }
                 )
 
@@ -51,11 +51,11 @@ def page_teams_summary(loader, last_match_date: str | None = None):
 
             for tid, stats in team_stats.items():
                 bp_avg = np.mean(stats["bp"]) if stats["bp"] else global_mean
-                so_avg = np.mean(stats["so"]) if stats["so"] else global_mean
+                so_avg = np.mean(stats["so"]) if stats["so"] else 1 - global_mean
                 data.append(
                     {
                         "team_id": tid,
-                        "team_name": tid,
+                        "team_name": team_names.get(str(tid), str(tid)),
                         "Breakpoint_Prob": bp_avg,
                         "Sideout_Prob": so_avg,
                     }
@@ -90,7 +90,14 @@ def page_teams_summary(loader, last_match_date: str | None = None):
         st.dataframe(df)
         return
 
+    if active_model:
+        st.info(f"Using Active Model: **{active_model['name']}** (Logistic)")
+
     fitted_params_df = get_fitted_params_df()
+    if fitted_params_df is None and active_model and active_model.get("type") == "logistic":
+        params_df = active_model.get("params", {}).get("params")
+        if isinstance(params_df, pd.DataFrame):
+            fitted_params_df = params_df
     if fitted_params_df is None:
         if last_match_date:
             st.info(f"Last match date in DB: {last_match_date}")
