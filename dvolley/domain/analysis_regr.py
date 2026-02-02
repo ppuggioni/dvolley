@@ -322,7 +322,6 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         C_val = 1.0 / (self.alpha * n_samples) if self.alpha > 0 else 1e10
 
         clf = LogisticRegression(
-            penalty="l2",
             C=C_val,
             max_iter=self.max_iter,
             random_state=self.random_state,

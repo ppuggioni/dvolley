@@ -51,6 +51,59 @@ def _prep_model_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def fit_selected_model(
+    active_df: pd.DataFrame,
+    selected_model: str,
+    *,
+    show_messages: bool = True,
+) -> bool:
+    model_df = _prep_model_df(active_df)
+    if model_df.empty:
+        if show_messages:
+            st.warning("No valid data available for fitting.")
+        return False
+
+    model = _get_model_instance(selected_model)
+    if model is None:
+        if show_messages:
+            st.error(f"Unknown model: {selected_model}")
+        return False
+
+    model.fit(model_df)
+    sim_params = model.get_simulator_params()
+    st.session_state["active_model"] = {
+        "name": selected_model,
+        "params": sim_params,
+        "type": sim_params.get("type"),
+    }
+
+    if sim_params.get("type") == "logistic":
+        params_df = sim_params.get("params")
+        if params_df is not None:
+            st.session_state["fitted_params_df"] = params_df
+            if show_messages:
+                num_teams = len(
+                    params_df[params_df["par_type"] == "team"]["team_id"].unique()
+                )
+                num_params = len(params_df)
+                st.success("✅ Model refitted successfully!")
+                st.info(
+                    f"Fitted {num_params} parameters for {num_teams} teams "
+                    f"using {len(active_df)} rallies."
+                )
+        else:
+            if show_messages:
+                st.warning("Model fit succeeded but no parameters were returned.")
+    else:
+        st.session_state.pop("fitted_params_df", None)
+        if show_messages:
+            st.success("✅ Model refitted successfully!")
+
+    if show_messages:
+        st.info("You can now use the Rotation Simulator and Teams Summary pages.")
+    return True
+
+
 def page_setup_status(loader, last_match_date: str | None = None):
     st.title("Setup & Status")
 
@@ -78,128 +131,100 @@ def page_setup_status(loader, last_match_date: str | None = None):
 
     st.divider()
 
-    st.markdown("### 1) Sync from Google Drive")
-    st.caption("Pull new `.dvw` files and upload to Supabase.")
-    if st.button("Sync Google Drive â†’ DB", type="primary"):
-        folder_ids = []
-        if "gdrive" in st.secrets:
-            if "folder_ids" in st.secrets["gdrive"]:
-                folder_ids = st.secrets["gdrive"]["folder_ids"]
-            elif "folder_id" in st.secrets["gdrive"]:
-                folder_ids = [st.secrets["gdrive"]["folder_id"]]
+    col_sync, col_load, col_fit = st.columns(3, gap="large")
 
-        if not folder_ids:
-            st.error("No Google Drive folder configured in secrets.")
-        else:
-            with st.status("Updating Database...", expanded=True) as status:
-                st.write("Checking for new Rally Data...")
-                try:
-                    new_rallies = update_database(folder_ids)
-                    if new_rallies:
-                        st.success(f"Uploaded {len(new_rallies)} new files to Rally Data: {', '.join(new_rallies)}")
-                    else:
-                        st.info("Rally Data is up to date.")
-                except Exception as e:
-                    st.error(f"Error updating Rally Data: {e}")
+    with col_sync:
+        st.markdown("### Sync from Google Drive")
+        st.caption("Pull new `.dvw` files and upload to Supabase.")
+        if st.button("Sync Google Drive â†’ DB", type="primary"):
+            folder_ids = []
+            if "gdrive" in st.secrets:
+                if "folder_ids" in st.secrets["gdrive"]:
+                    folder_ids = st.secrets["gdrive"]["folder_ids"]
+                elif "folder_id" in st.secrets["gdrive"]:
+                    folder_ids = [st.secrets["gdrive"]["folder_id"]]
 
-                st.write("Checking for new Touch Data...")
-                try:
-                    new_touches = update_database_full(folder_ids)
-                    if new_touches:
-                        st.success(f"Uploaded {len(new_touches)} new matches to Touch Data: {', '.join(new_touches)}")
-                    else:
-                        st.info("Touch Data is up to date.")
-                except Exception as e:
-                    st.error(f"Error updating Touch Data: {e}")
+            if not folder_ids:
+                st.error("No Google Drive folder configured in secrets.")
+            else:
+                with st.status("Updating Database...", expanded=True) as status:
+                    st.write("Checking for new Rally Data...")
+                    try:
+                        new_rallies = update_database(folder_ids)
+                        if new_rallies:
+                            st.success(
+                                f"Uploaded {len(new_rallies)} new files to Rally Data: "
+                                f"{', '.join(new_rallies)}"
+                            )
+                        else:
+                            st.info("Rally Data is up to date.")
+                    except Exception as e:
+                        st.error(f"Error updating Rally Data: {e}")
 
-                status.update(label="Database Update Complete", state="complete", expanded=False)
+                    st.write("Checking for new Touch Data...")
+                    try:
+                        new_touches = update_database_full(folder_ids)
+                        if new_touches:
+                            st.success(
+                                f"Uploaded {len(new_touches)} new matches to Touch Data: "
+                                f"{', '.join(new_touches)}"
+                            )
+                        else:
+                            st.info("Touch Data is up to date.")
+                    except Exception as e:
+                        st.error(f"Error updating Touch Data: {e}")
 
-            st.cache_data.clear()
+                    status.update(label="Database Update Complete", state="complete", expanded=False)
+
+                st.cache_data.clear()
+                loader.data = None
+                perform_load_async = st.session_state.get("perform_load_async")
+                if perform_load_async:
+                    perform_load_async()
+
+    with col_load:
+        st.markdown("### Load DB into the app")
+        if loader.is_loading:
+            st.info(f"â³ Loading data from Database... {loader.progress_text}")
+            time.sleep(0.5)
+            _safe_rerun()
+        elif loader.error:
+            st.error(f"Load failed: {loader.error}")
+        elif active_df is not None:
+            st.success(f"âœ… Data loaded ({len(active_df)} rallies)")
+        if st.button("Reload data from DB"):
             loader.data = None
-            perform_load_async = st.session_state.get("perform_load_async")
+            loader.is_loading = False
+            loader.progress_text = ""
             if perform_load_async:
                 perform_load_async()
+            _safe_rerun()
 
-    st.divider()
-
-    st.markdown("### 2) Load DB into the app")
-    if loader.is_loading:
-        st.info(f"â³ Loading data from Database... {loader.progress_text}")
-        time.sleep(0.5)
-        _safe_rerun()
-    elif loader.error:
-        st.error(f"Load failed: {loader.error}")
-    elif active_df is not None:
-        st.success(f"âœ… Data loaded ({len(active_df)} rallies)")
-    if st.button("Reload data from DB"):
-        loader.data = None
-        loader.is_loading = False
-        loader.progress_text = ""
-        if perform_load_async:
-            perform_load_async()
-        _safe_rerun()
-
-    st.divider()
-
-    st.markdown("### 3) Fit model")
-    model_names = [
-        "logistic_rotation_alpha_0.1",
-        "logistic_rotation_alpha_0.05",
-        "logistic_rotation_alpha_0.01",
-        "logistic_rotation_alpha_0.005",
-        "logistic_rotation_alpha_0.001",
-        "empirical_global_only",
-        "empirical_team",
-        "empirical_team_rotation",
-    ]
-    default_index = model_names.index("logistic_rotation_alpha_0.001")
-    selected_model = st.selectbox(
-        "Model",
-        options=model_names,
-        index=default_index,
-        key="fit_model_option",
-    )
-    if active_df is None or active_df.empty:
-        st.info("Load data first to fit the model.")
-    else:
-        if st.button(f"Fit model ({selected_model})"):
-            with st.spinner("Refitting model... this may take a moment..."):
-                model_df = _prep_model_df(active_df)
-                if model_df.empty:
-                    st.warning("No valid data available for fitting.")
-                else:
-                    model = _get_model_instance(selected_model)
-                    if model is None:
-                        st.error(f"Unknown model: {selected_model}")
-                    else:
-                        model.fit(model_df)
-                        sim_params = model.get_simulator_params()
-                        st.session_state["active_model"] = {
-                            "name": selected_model,
-                            "params": sim_params,
-                            "type": sim_params.get("type"),
-                        }
-
-                        if sim_params.get("type") == "logistic":
-                            params_df = sim_params.get("params")
-                            if params_df is not None:
-                                st.session_state["fitted_params_df"] = params_df
-                                num_teams = len(
-                                    params_df[params_df["par_type"] == "team"]["team_id"].unique()
-                                )
-                                num_params = len(params_df)
-                                st.success("âœ… Model refitted successfully!")
-                                st.info(
-                                    f"Fitted {num_params} parameters for {num_teams} teams "
-                                    f"using {len(active_df)} rallies."
-                                )
-                            else:
-                                st.warning("Model fit succeeded but no parameters were returned.")
-                        else:
-                            st.session_state.pop("fitted_params_df", None)
-                            st.success("âœ… Model refitted successfully!")
-
-                        st.info("You can now use the Rotation Simulator and Teams Summary pages.")
+    with col_fit:
+        st.markdown("### Fit model")
+        model_names = [
+            "logistic_rotation_alpha_0.1",
+            "logistic_rotation_alpha_0.05",
+            "logistic_rotation_alpha_0.01",
+            "logistic_rotation_alpha_0.005",
+            "logistic_rotation_alpha_0.001",
+            "empirical_global_only",
+            "empirical_team",
+            "empirical_team_rotation",
+        ]
+        default_index = model_names.index("logistic_rotation_alpha_0.005")
+        selected_model = st.selectbox(
+            "Model",
+            options=model_names,
+            index=default_index,
+            key="fit_model_option",
+        )
+        if active_df is None or active_df.empty:
+            st.info("Load data first to fit the model.")
+        else:
+            if st.button(f"Fit model ({selected_model})"):
+                with st.spinner("Refitting model... this may take a moment..."):
+                    fit_selected_model(active_df, selected_model, show_messages=True)
 
     if active_df is not None and not active_df.empty:
         st.divider()
