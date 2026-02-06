@@ -15,6 +15,7 @@ if ROOT_DIR not in sys.path:
 from dvolley.services.data_loader import load_data_from_db
 from dvolley.ui.pages.setup import fit_selected_model
 from dvolley.ui.pages.model_analysis import page_model_analysis
+from dvolley.ui.pages.detailed_analysis import page_detailed_analysis_main
 from dvolley.ui.pages.rotation import page_rotation_main
 from dvolley.ui.pages.teams_summary import page_teams_summary
 from dvolley.ui.pages.wip import wip_page_main
@@ -29,6 +30,7 @@ PAGE_SETUP = "Setup & Status"
 PAGE_ROTATION = "Rotation Simulator"
 PAGE_TEAMS_SUMMARY = "Teams Summary"
 PAGE_MODEL_ANALYSIS = "Model Analysis"
+PAGE_DETAILED_ANALYSIS = "Detailed Analysis"
 PAGE_WIP = "Work in Progress"
 DEFAULT_AUTO_MODEL = "logistic_rotation_alpha_0.005"
 
@@ -120,7 +122,14 @@ def main():
     st.sidebar.title("Menu")
     page = st.sidebar.selectbox(
         "Select page",
-        options=[PAGE_SETUP, PAGE_ROTATION, PAGE_TEAMS_SUMMARY, PAGE_MODEL_ANALYSIS, PAGE_WIP],
+        options=[
+            PAGE_SETUP,
+            PAGE_DETAILED_ANALYSIS,
+            PAGE_ROTATION,
+            PAGE_TEAMS_SUMMARY,
+            PAGE_MODEL_ANALYSIS,
+            PAGE_WIP,
+        ],
         index=0,
     )
 
@@ -131,6 +140,8 @@ def main():
     if page == PAGE_SETUP:
         from dvolley.ui.pages.setup import page_setup_status
         page_setup_status(loader, last_match_date=last_match_date)
+    elif page == PAGE_DETAILED_ANALYSIS:
+        page_detailed_analysis_main(loader)
     elif page == PAGE_ROTATION:
         page_rotation_main(loader, last_match_date=last_match_date)
     elif page == PAGE_TEAMS_SUMMARY:
