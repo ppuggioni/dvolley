@@ -210,6 +210,46 @@ def fetch_touches_by_match_id(match_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def fetch_touches_by_match_ids(match_ids: list[str]) -> pd.DataFrame:
+    """
+    Fetches all touch rows for a list of match_alternative_id values.
+    """
+    if not match_ids:
+        return pd.DataFrame()
+
+    try:
+        all_rows = []
+        page_size = 1000
+        chunk_size = 20
+        clean_ids = [str(m) for m in match_ids if m]
+
+        for i in range(0, len(clean_ids), chunk_size):
+            chunk = clean_ids[i : i + chunk_size]
+            start = 0
+
+            while True:
+                response = (
+                    supabase.table("touch_level_data")
+                    .select("*")
+                    .in_("match_alternative_id", chunk)
+                    .range(start, start + page_size - 1)
+                    .execute()
+                )
+                rows = response.data
+                if not rows:
+                    break
+                all_rows.extend(rows)
+
+                if len(rows) < page_size:
+                    break
+                start += page_size
+
+        return pd.DataFrame(all_rows)
+    except Exception as e:
+        logger.error("Error fetching touches for match IDs: %s", e)
+        return pd.DataFrame()
+
+
 def delete_all_rallies() -> int:
     """
     Deletes all rows from rally_level_data by file_id batches.

@@ -350,3 +350,44 @@ def load_match_data_from_db(match_id: str) -> pd.DataFrame:
         df = df[existing_cols]
 
     return df
+
+
+def load_matches_data_from_db(match_ids: list[str]) -> pd.DataFrame:
+    """
+    Loads touch data for a list of match_alternative_id values from Supabase.
+    """
+    if not match_ids:
+        return pd.DataFrame()
+
+    logger.info("Fetching touch data for %s matches from Supabase...", len(match_ids))
+    df = db.fetch_touches_by_match_ids(match_ids)
+
+    if not df.empty:
+        if "home_team" in df.columns and "visiting_team" in df.columns:
+            affected_home = df[df["home_team"] == TEAM_NAME_TO_FIX]["home_team_id"].unique()
+            affected_away = df[df["visiting_team"] == TEAM_NAME_TO_FIX]["visiting_team_id"].unique()
+            all_affected_ids = list(set(list(affected_home) + list(affected_away)))
+
+            if len(all_affected_ids) > 1:
+                canonical_id = str(min(all_affected_ids))
+                for old_id in all_affected_ids:
+                    if old_id != canonical_id:
+                        df.loc[df["home_team_id"] == old_id, "home_team_id"] = canonical_id
+                        df.loc[df["visiting_team_id"] == old_id, "visiting_team_id"] = canonical_id
+
+        if "match_date" in df.columns:
+            df["match_date"] = df["match_date"].apply(normalize_date_str)
+
+        if "unique_row_id" in df.columns:
+            df["unique_row_id"] = pd.to_numeric(df["unique_row_id"], errors="coerce").fillna(0).astype(int)
+
+        sort_cols = ["match_date", "file_id", "unique_row_id"]
+        existing_sort_cols = [c for c in sort_cols if c in df.columns]
+        if existing_sort_cols:
+            df = df.sort_values(by=existing_sort_cols).reset_index(drop=True)
+
+        cols_to_use = [c for c in SQL_ORDERED_COLS if c in df.columns]
+        extra_cols = [c for c in df.columns if c not in cols_to_use]
+        df = df[cols_to_use + extra_cols]
+
+    return df
