@@ -1,54 +1,65 @@
 # Architecture Overview
 
-## Core Data Flow
+## Runtime layers
 
-1. **Google Drive → Supabase**
-   - `dvolley/services/gdrive.py` lists and reads `.dvw` files.
-   - `dvolley/services/data_loader.update_database` (rally-level) and `update_database_full` (touch-level) parse files and upload into Supabase tables.
-   - Dates are normalized to `YYYY-MM-DD` via `dvolley/data/normalization.py`.
+1. **Ingestion layer**
+   - Reads `.dvw` files from Google Drive.
+   - Parses rally-level rows (`dvw_parser.py`) and touch-level rows (`full_parser.py`).
+   - Uploads into Supabase tables:
+     - `rally_level_data`
+     - `touch_level_data`
 
-2. **Supabase → App**
-   - `app.py` starts a `BackgroundLoader` and pulls rally data using `dvolley/services/data_loader.load_data_from_db`.
-   - Data is cached in `st.session_state` for the UI.
+2. **Application layer (Streamlit)**
+   - `app.py` starts a background loader for rally data only.
+   - Pages in `dvolley/ui/pages/` consume loader data and on-demand DB queries.
 
-3. **Model Fit → Parameters**
-   - The Streamlit UI fits parameters on demand using `dvolley/domain/analysis_regr.py`.
-   - Parameters live in memory (`st.session_state["fitted_params_df"]`); no local CSV is required.
+3. **Domain layer**
+   - `analysis_regr.py` and `models.py` fit model parameters.
+   - `simulator.py` computes point/set/match probabilities.
+   - `breakpoint_touch_analysis.py` and `sideout_touch_analysis.py` build touch-based tables.
 
-4. **Simulator → UI**
-   - The rotation simulator in `dvolley/domain/simulator.py` runs from UI inputs and fitted params.
-   - Results are rendered in the Streamlit pages under `dvolley/ui/pages/`.
+4. **Service layer**
+   - `db.py`: low-level Supabase calls (paged reads, writes, filtered match fetch).
+   - `data_loader.py`: normalized, app-facing loaders and ingestion orchestration.
 
-## Modules and Responsibilities
+## End-to-end flows
 
-- **Domain (`dvolley/domain/`)**
-  - `analysis_regr.py`: logistic regression model fitting.
-  - `models.py`: alternative models for backtesting/comparison.
-  - `simulator.py`: deterministic rotation simulator.
-  - `backtest_engine.py`: evaluation and calibration utilities.
+### A) Google Drive -> Supabase
 
-- **Data (`dvolley/data/`)**
-  - `dvw_parser.py`: rally-level parsing.
-  - `full_parser.py`: touch-level parsing.
-  - `normalization.py`: strict date normalization.
+1. `update_database(...)` ingests rally-level rows.
+2. `update_database_full(...)` ingests touch-level rows.
+3. Dates are normalized to `YYYY-MM-DD`.
+4. `match_alternative_id` is rebuilt from normalized date plus team IDs.
 
-- **Services (`dvolley/services/`)**
-  - `db.py`: Supabase CRUD and pagination.
-  - `gdrive.py`: Google Drive I/O wrapper.
-  - `data_loader.py`: orchestration for ingestion and DB reads.
-  - `maintenance.py`: DB date normalization.
-  - `database_connection.py`: Supabase client.
+### B) Streamlit startup -> model state
 
-- **UI (`dvolley/ui/`)**
-  - `pages/rotation.py`, `teams_summary.py`, `model_analysis.py`, `load_data.py`: Streamlit pages.
+1. `app.py` loads rally data with `load_data_from_db()`.
+2. Rally dataframe is stored in `loader.data` and session state.
+3. Auto-fit runs once per new load id, using the selected model option.
 
-- **CLI (`dvolley/cli/main.py`)**
-  - `reset-db`: wipe and reload from Google Drive.
-  - `normalize-dates`: fix `match_date` and `match_alternative_id`.
-  - `fit-model`: fit and export parameters to CSV.
+### C) Detailed Analysis page (team-first, filtered touch load)
 
-## Operational Notes
+1. Team catalog and match list are built from `loader.data` (rally dataset).
+2. User selects team and match scope.
+3. App loads touch rows only for selected matches via:
+   - `load_matches_data_from_db(match_ids)`
+   - `db.fetch_touches_by_match_ids(match_ids)`
+4. Page routes to breakpoint or sideout analysis with the filtered touch dataframe.
 
-- **Source of truth**: Supabase. Local CSVs are not required for the app.
-- **Date handling**: strict `DD/MM/YYYY` and ISO only to prevent day/month swaps.
-- **Testing**: unit tests live in `tests/` and exercise parsers, normalization, and service layers.
+This is the key performance behavior: **no full touch-table load on page entry**.
+
+## Module map
+
+- `dvolley/ui/pages/setup.py`: DB sync, reload, model fitting, downloads.
+- `dvolley/ui/pages/detailed_analysis.py`: shared selectors plus phase radio.
+- `dvolley/ui/pages/breakpoint_touch.py`: breakpoint touch tables.
+- `dvolley/ui/pages/sideout_touch.py`: sideout touch tables.
+- `dvolley/ui/pages/rotation.py`: rotation simulation.
+- `dvolley/ui/pages/teams_summary.py`, `dvolley/ui/pages/model_analysis.py`: parameter summaries.
+
+## Operational constraints
+
+- Supabase is the source of truth for app data.
+- Dates must remain `YYYY-MM-DD` across upload/read paths.
+- Keep fit outputs in memory for app usage (`st.session_state`) unless exporting via CLI.
+- Unit tests (`tests/unit`) should pass before merge.
