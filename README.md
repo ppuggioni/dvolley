@@ -51,6 +51,28 @@ Configure credentials in `st.secrets` for:
    - **Rotation Simulator** for 6x6 win-probability grids.
    - **Teams Summary** and **Model Analysis** for fitted-parameter diagnostics.
 
+## Page guide
+
+### Detailed Analysis
+
+- Touch-by-touch scouting page with two submodes:
+  - **Breakpoint**: selected team is serving.
+  - **Sideout**: selected team is receiving.
+- Useful to inspect reception/serve quality classes, rotation splits, and player summaries.
+- Team and match selectors are driven by rally data; touch rows are loaded only for selected matches.
+
+### Conditional Breakpoint Probability
+
+- Estimates `P(Breakpoint | first receiving attack quality)`.
+- Two interpretations:
+  - **Team sideout**: breakpoint = opponent wins rally.
+  - **Team breakpoint**: breakpoint = selected team wins rally.
+- Excludes rallies with no first receiving attack.
+- Includes share columns:
+  - `Condition_share_of_first_attacks`: frequency of each quality over all analyzed first attacks.
+  - `Condition_share_within_rotation`: quality mix inside each rotation.
+  - `Condition_share_within_player`: quality mix inside each player (sideout mode).
+
 ## Important behavior: Detailed Analysis loading
 
 - Team and match lists come from the already-loaded rally dataset (`loader.data`).
