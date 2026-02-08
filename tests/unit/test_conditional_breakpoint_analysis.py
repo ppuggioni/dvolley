@@ -145,7 +145,7 @@ def test_sideout_mode_uses_receiving_attack_and_excludes_no_first_attack():
     assert result.diagnostics["skipped_no_first_attack"] == 1
 
     quality_probs = {
-        row["Attack_quality"]: row["Breakpoint_probability"]
+        row["Attack_quality"]: row["Point_won_probability"]
         for _, row in result.quality_summary.iterrows()
         if row["Attack_quality"] != "Total"
     }
@@ -154,9 +154,9 @@ def test_sideout_mode_uses_receiving_attack_and_excludes_no_first_attack():
         for _, row in result.quality_summary.iterrows()
         if row["Attack_quality"] != "Total"
     }
-    assert quality_probs["#"] == 0.0
-    assert quality_probs["="] == 1.0
-    assert quality_probs["!"] == 1.0
+    assert quality_probs["#"] == 1.0
+    assert quality_probs["="] == 0.0
+    assert quality_probs["!"] == 0.0
     assert quality_shares["#"] == 1 / 3
     assert quality_shares["="] == 1 / 3
     assert quality_shares["!"] == 1 / 3
@@ -203,12 +203,12 @@ def test_breakpoint_mode_rotation_is_selected_server_rotation():
         (result.rotation_quality_summary["Rotation"] == 5)
         & (result.rotation_quality_summary["Attack_quality"] == "-")
     ].iloc[0]
-    assert row["Breakpoint_probability"] == 1.0
+    assert row["Point_won_probability"] == 1.0
     assert row["Condition_share_of_first_attacks"] == 0.5
     assert row["Condition_share_within_rotation"] == 1.0
 
     quality_probs = {
-        row["Attack_quality"]: row["Breakpoint_probability"]
+        row["Attack_quality"]: row["Point_won_probability"]
         for _, row in result.quality_summary.iterrows()
         if row["Attack_quality"] != "Total"
     }

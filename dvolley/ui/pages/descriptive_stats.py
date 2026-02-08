@@ -3,9 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from dvolley.domain.conditional_breakpoint_analysis import (
-    ConditionalBreakpointResult,
-    build_conditional_breakpoint_analysis,
+from dvolley.domain.descriptive_touch_stats import (
+    build_attack_quality_drilldown_table,
+    build_descriptive_touch_stats,
+    get_event_display_label,
 )
 from dvolley.services.data_loader import load_matches_data_from_db
 
@@ -74,67 +75,40 @@ def _extract_team_matches_from_rallies(rallies_df: pd.DataFrame, team_id: str) -
     return base.sort_values("match_date").reset_index(drop=True)
 
 
-def _format_probability_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _format_stats_table(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in out.columns:
-        c = str(col)
-        if "probability" in c.lower() or "share" in c.lower():
+        metric_name = col[1] if isinstance(col, tuple) and len(col) > 1 else str(col)
+        if "%" in str(metric_name):
             out[col] = out[col].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
+        else:
+            out[col] = out[col].apply(lambda x: int(x) if pd.notna(x) else 0)
     return out
 
 
-def _render_main_tables(result: ConditionalBreakpointResult, mode: str):
-    st.markdown("### Conditional Point-Won Probability by First-Attack Quality")
-    st.dataframe(_format_probability_columns(result.quality_summary), use_container_width=True)
-
-    st.markdown(f"### Breakdown by Rotation ({result.rotation_axis_label})")
-    st.dataframe(_format_probability_columns(result.rotation_quality_summary), use_container_width=True)
-
-    st.markdown("### Rotation x Attack Quality (Point-Won Probability)")
-    pivot_fmt = result.rotation_probability_pivot.copy()
-    for col in pivot_fmt.columns:
-        pivot_fmt[col] = pivot_fmt[col].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
-    st.dataframe(pivot_fmt, use_container_width=True)
-
-    if mode == "sideout":
-        st.markdown("### Sideout only: Player Breakdown (First Attack)")
-        if result.player_summary.empty:
-            st.info("No player-level rows available for this selection.")
-        else:
-            st.dataframe(_format_probability_columns(result.player_summary), use_container_width=True)
-            st.markdown("#### Player x Attack Quality")
-            st.dataframe(_format_probability_columns(result.player_quality_summary), use_container_width=True)
+def _display_with_labels(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.index = [get_event_display_label(str(idx)) for idx in out.index]
+    out.index.name = "Event type"
+    return out
 
 
-def page_conditional_breakpoint_main(loader):
-    st.title("Conditional Breakpoint Probability")
-    with st.expander("How to read this page", expanded=True):
-        st.markdown(
-            "- Goal: estimate **P(point won by selected team | first receiving attack quality)**.\n"
-            "- `Team sideout`: selected team is receiving.\n"
-            "- `Team breakpoint`: selected team is serving.\n"
-            "- Rallies without a first receiving attack are excluded.\n"
-            "- `Condition_share_of_first_attacks` shows how frequent each quality is in the analyzed sample "
-            "(for example, 400/887 = 45.1%).\n"
-            "- `Condition_share_within_rotation` and `Condition_share_within_player` are local composition shares."
-        )
+def page_descriptive_stats_main(loader):
+    st.title("Descriptive Statistics")
+    st.info(
+        "Descriptive touch-by-touch statistics for a selected team.\n"
+        "- Sideout: selected team receives.\n"
+        "- Breakpoint: selected team serves.\n"
+        "- Shares in P1..P6 columns are within each rotation."
+    )
 
     mode_label = st.radio(
-        "Team phase",
-        options=["Team sideout", "Team breakpoint"],
+        "Phase",
+        options=["Sideout", "Breakpoint"],
         horizontal=True,
-        key="conditional_bp_mode",
+        key="descriptive_phase",
     )
-    mode = "sideout" if mode_label == "Team sideout" else "breakpoint"
-
-    if mode == "sideout":
-        st.caption(
-            "P(point won by selected team | first attack quality), with selected team receiving."
-        )
-    else:
-        st.caption(
-            "P(point won by selected team | first attack quality), with selected team serving."
-        )
+    mode = mode_label.lower()
 
     rallies_df = getattr(loader, "data", None)
     if rallies_df is None:
@@ -161,7 +135,7 @@ def page_conditional_breakpoint_main(loader):
         index=None,
         placeholder="Choose a team...",
         format_func=lambda tid: f"{team_names.get(tid, tid)} ({tid})",
-        key="conditional_bp_team_id",
+        key="descriptive_team_id",
     )
     if not selected_team_id:
         st.info("Select a team to load matches.")
@@ -188,7 +162,7 @@ def page_conditional_breakpoint_main(loader):
         "Match selection",
         options=["All", "Manual selection"],
         horizontal=True,
-        key="conditional_bp_match_selection_mode",
+        key="descriptive_match_selection_mode",
     )
     if selection_mode == "All":
         selected_match_ids = all_match_ids
@@ -198,7 +172,7 @@ def page_conditional_breakpoint_main(loader):
             options=all_match_ids,
             default=all_match_ids[: min(5, len(all_match_ids))],
             format_func=lambda mid: match_id_to_label.get(mid, mid),
-            key="conditional_bp_match_ids",
+            key="descriptive_match_ids",
         )
 
     if not selected_match_ids:
@@ -215,29 +189,59 @@ def page_conditional_breakpoint_main(loader):
 
     touches_df = touches_df[touches_df["match_alternative_id"].astype(str).isin(match_ids_cache_key)].copy()
 
-    result = build_conditional_breakpoint_analysis(
+    st.markdown("### Options")
+    include_by_rotation = st.checkbox(
+        "Show rotation breakdown (Total + P1..P6)",
+        value=True,
+        key="descriptive_include_by_rotation",
+    )
+    exclude_sideout_serve_errors = False
+    if mode == "sideout":
+        exclude_sideout_serve_errors = st.checkbox(
+            "Exclude opponent serve errors from sideout stats",
+            value=False,
+            key="descriptive_exclude_sideout_serve_errors",
+        )
+
+    result = build_descriptive_touch_stats(
         touches_df=touches_df,
         team_id=selected_team_id,
         mode=mode,
         selected_match_ids=list(match_ids_cache_key),
+        include_by_rotation=include_by_rotation,
+        exclude_sideout_serve_errors=exclude_sideout_serve_errors,
     )
 
-    if result.rally_df.empty:
-        st.warning("No rallies with a first receiving attack found for this selection.")
-        with st.expander("Diagnostics", expanded=False):
-            st.write(result.diagnostics)
+    if result.rallies_df.empty:
+        st.warning("No valid rallies found for this selection.")
         return
 
-    total = int(len(result.rally_df))
-    total_points = int(result.rally_df["selected_team_point_won"].sum())
-    p_points = (total_points / total) if total > 0 else np.nan
+    st.markdown("### Event Summary")
+    st.caption(
+        "Columns report Actions, share within segment, Successful points, and success rate."
+    )
+    summary_display = _display_with_labels(_format_stats_table(result.summary_table))
+    st.dataframe(summary_display, use_container_width=True)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Rallies analyzed", total)
-    c2.metric("Points won by selected team", total_points)
-    c3.metric("Overall point-won probability", f"{p_points:.2%}" if pd.notna(p_points) else "-")
+    if not result.event_keys:
+        st.info("No event rows available for attack-quality drilldown.")
+        return
 
-    _render_main_tables(result, mode=mode)
+    selected_event = st.selectbox(
+        "Event type for attack-quality breakdown",
+        options=result.event_keys,
+        index=0,
+        format_func=get_event_display_label,
+        key="descriptive_selected_event",
+    )
 
-    with st.expander("Diagnostics", expanded=False):
-        st.write(result.diagnostics)
+    drilldown = build_attack_quality_drilldown_table(
+        rallies_df=result.rallies_df,
+        event_key=selected_event,
+        include_by_rotation=include_by_rotation,
+    )
+    st.markdown(f"### Attack-Quality Breakdown for '{get_event_display_label(selected_event)}'")
+    if drilldown.empty:
+        st.info("No attack-quality rows available for this event.")
+        return
+    st.dataframe(_format_stats_table(drilldown), use_container_width=True)

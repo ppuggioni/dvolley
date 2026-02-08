@@ -3,7 +3,7 @@
 ## Project Structure & Responsibilities
 
 - `app.py`: Streamlit entrypoint and page routing.
-- `dvolley/ui/pages/`: user-facing pages (`setup.py`, `detailed_analysis.py`, `rotation.py`, `teams_summary.py`, `model_analysis.py`).
+- `dvolley/ui/pages/`: user-facing pages (`setup.py`, `detailed_analysis.py`, `descriptive_stats.py`, `conditional_breakpoint.py`, `rotation.py`, `teams_summary.py`, `model_analysis.py`).
 - `dvolley/domain/`: model fitting, simulation, and touch analysis logic.
 - `dvolley/services/`: Supabase/GDrive integration and DB loaders.
 - `dvolley/data/`: DVW parsers and normalization helpers.
@@ -22,7 +22,7 @@
 
 - Supabase is the source of truth; do not add local CSV dependencies for app runtime.
 - Keep date handling consistent as `YYYY-MM-DD` in both uploads and reads.
-- For `Detailed Analysis`, do not preload full touch data:
+- For touch-analysis pages (`Detailed Analysis`, `Descriptive Statistics`, `Conditional Breakpoint Probability`), do not preload full touch data:
   - build team/match options from rally data (`loader.data`)
   - fetch touch rows only for selected match IDs (`load_matches_data_from_db`)
 
@@ -41,6 +41,8 @@
 - If UI behavior changed, verify key flows in Streamlit:
   - Setup sync/load/fit
   - Detailed Analysis (team -> matches -> filtered touch load)
+  - Descriptive Statistics (phase/team/match filters, rotation toggle, drilldown)
+  - Conditional Breakpoint Probability (point-won labels and metrics)
   - Rotation and Teams Summary still working
 
 ## PR/Commit Expectations

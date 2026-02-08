@@ -174,10 +174,7 @@ def _build_rally_df(
             diagnostics["skipped_missing_point_winner"] += 1
             continue
 
-        if mode == "sideout":
-            bp_for_selected_team = int(point_winner != selected_team_name)
-        else:
-            bp_for_selected_team = int(point_winner == selected_team_name)
+        selected_team_point_won = int(point_winner == selected_team_name)
 
         attack_quality_raw = _normalize_eval(first_attack.get("evaluation_code"))
         attack_quality = (
@@ -202,7 +199,7 @@ def _build_rally_df(
                 "first_attack_player_name": (
                     first_attack_player if pd.notna(first_attack_player) else "Unknown"
                 ),
-                "bp_outcome": bp_for_selected_team,
+                "selected_team_point_won": selected_team_point_won,
             }
         )
 
@@ -216,7 +213,9 @@ def _build_rally_df(
     diagnostics["skipped_invalid_rotation"] = before_rotation_filter - int(len(out))
 
     out["selected_rotation"] = out["selected_rotation"].astype(int)
-    out["bp_outcome"] = pd.to_numeric(out["bp_outcome"], errors="coerce").fillna(0).astype(int)
+    out["selected_team_point_won"] = (
+        pd.to_numeric(out["selected_team_point_won"], errors="coerce").fillna(0).astype(int)
+    )
     out = out.drop_duplicates(subset=["rally_id"], keep="first").reset_index(drop=True)
     diagnostics["counted_rallies"] = int(len(out))
     return out, diagnostics
@@ -227,7 +226,7 @@ def _build_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
         rally_df.groupby("first_attack_quality", dropna=False)
         .agg(
             Attempts=("rally_id", "count"),
-            Breakpoint_count=("bp_outcome", "sum"),
+            Point_won_count=("selected_team_point_won", "sum"),
         )
         .reset_index()
         .rename(columns={"first_attack_quality": "Attack_quality"})
@@ -238,9 +237,9 @@ def _build_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
         base["Attempts"] / total_attempts,
         np.nan,
     )
-    base["Breakpoint_probability"] = np.where(
+    base["Point_won_probability"] = np.where(
         base["Attempts"] > 0,
-        base["Breakpoint_count"] / base["Attempts"],
+        base["Point_won_count"] / base["Attempts"],
         np.nan,
     )
     base = _sort_quality_column(base, "Attack_quality")
@@ -250,10 +249,10 @@ def _build_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
             {
                 "Attack_quality": "Total",
                 "Attempts": int(base["Attempts"].sum()),
-                "Breakpoint_count": int(base["Breakpoint_count"].sum()),
+                "Point_won_count": int(base["Point_won_count"].sum()),
                 "Condition_share_of_first_attacks": 1.0 if total_attempts > 0 else np.nan,
-                "Breakpoint_probability": (
-                    base["Breakpoint_count"].sum() / base["Attempts"].sum()
+                "Point_won_probability": (
+                    base["Point_won_count"].sum() / base["Attempts"].sum()
                     if base["Attempts"].sum() > 0
                     else np.nan
                 ),
@@ -268,7 +267,7 @@ def _build_rotation_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
         rally_df.groupby(["selected_rotation", "first_attack_quality"], dropna=False)
         .agg(
             Attempts=("rally_id", "count"),
-            Breakpoint_count=("bp_outcome", "sum"),
+            Point_won_count=("selected_team_point_won", "sum"),
         )
         .reset_index()
         .rename(columns={"selected_rotation": "Rotation", "first_attack_quality": "Attack_quality"})
@@ -284,9 +283,9 @@ def _build_rotation_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
         base["Attempts"] / base.groupby("Rotation")["Attempts"].transform("sum"),
         np.nan,
     )
-    base["Breakpoint_probability"] = np.where(
+    base["Point_won_probability"] = np.where(
         base["Attempts"] > 0,
-        base["Breakpoint_count"] / base["Attempts"],
+        base["Point_won_count"] / base["Attempts"],
         np.nan,
     )
     base = _sort_quality_column(base, "Attack_quality")
@@ -301,7 +300,7 @@ def _build_rotation_probability_pivot(rotation_quality_summary: pd.DataFrame) ->
         rotation_quality_summary.pivot(
             index="Rotation",
             columns="Attack_quality",
-            values="Breakpoint_probability",
+            values="Point_won_probability",
         )
         .reindex(index=range(1, 7), columns=quality_order)
     )
@@ -321,7 +320,7 @@ def _build_player_tables(rally_df: pd.DataFrame, mode: str) -> tuple[pd.DataFram
         base.groupby("first_attack_player_name", dropna=False)
         .agg(
             Attempts=("rally_id", "count"),
-            Breakpoint_count=("bp_outcome", "sum"),
+            Point_won_count=("selected_team_point_won", "sum"),
         )
         .reset_index()
         .rename(columns={"first_attack_player_name": "Player"})
@@ -332,18 +331,18 @@ def _build_player_tables(rally_df: pd.DataFrame, mode: str) -> tuple[pd.DataFram
         by_player["Attempts"] / total_attempts,
         np.nan,
     )
-    by_player["Breakpoint_probability"] = np.where(
+    by_player["Point_won_probability"] = np.where(
         by_player["Attempts"] > 0,
-        by_player["Breakpoint_count"] / by_player["Attempts"],
+        by_player["Point_won_count"] / by_player["Attempts"],
         np.nan,
     )
-    by_player = by_player.sort_values(["Attempts", "Breakpoint_count"], ascending=[False, False]).reset_index(drop=True)
+    by_player = by_player.sort_values(["Attempts", "Point_won_count"], ascending=[False, False]).reset_index(drop=True)
 
     by_player_quality = (
         base.groupby(["first_attack_player_name", "first_attack_quality"], dropna=False)
         .agg(
             Attempts=("rally_id", "count"),
-            Breakpoint_count=("bp_outcome", "sum"),
+            Point_won_count=("selected_team_point_won", "sum"),
         )
         .reset_index()
         .rename(
@@ -364,9 +363,9 @@ def _build_player_tables(rally_df: pd.DataFrame, mode: str) -> tuple[pd.DataFram
         by_player_quality["Attempts"] / by_player_quality.groupby("Player")["Attempts"].transform("sum"),
         np.nan,
     )
-    by_player_quality["Breakpoint_probability"] = np.where(
+    by_player_quality["Point_won_probability"] = np.where(
         by_player_quality["Attempts"] > 0,
-        by_player_quality["Breakpoint_count"] / by_player_quality["Attempts"],
+        by_player_quality["Point_won_count"] / by_player_quality["Attempts"],
         np.nan,
     )
     by_player_quality = _sort_quality_column(by_player_quality, "Attack_quality")
