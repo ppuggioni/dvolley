@@ -14,9 +14,12 @@
    - Pages in `dvolley/ui/pages/` consume loader data and on-demand DB queries.
 
 3. **Domain layer**
-   - `analysis_regr.py` and `models.py` fit model parameters.
+   - `model_logistic_rotation.py` fits the logistic breakpoint/sideout model.
+   - `model_empirical.py` contains empirical baselines with the shared model interface.
    - `simulator.py` computes point/set/match probabilities.
    - `breakpoint_touch_analysis.py` and `sideout_touch_analysis.py` build touch-based tables.
+   - `conditional_breakpoint_analysis.py` computes first-attack conditional point-won summaries.
+   - `descriptive_touch_stats.py` computes event-level descriptive tables and drilldowns.
 
 4. **Service layer**
    - `db.py`: low-level Supabase calls (paged reads, writes, filtered match fetch).
@@ -48,10 +51,22 @@
 
 This is the key performance behavior: **no full touch-table load on page entry**.
 
+### D) Descriptive / Conditional pages (team-first, filtered touch load)
+
+1. Team catalog and match list are built from `loader.data` (rally dataset).
+2. User selects team, phase, and match scope.
+3. App loads touch rows only for selected matches via:
+   - `load_matches_data_from_db(match_ids)`
+   - `db.fetch_touches_by_match_ids(match_ids)`
+4. Descriptive page computes event-level tables (`Actions`, `% share`, `Successful`, `% successful`) with optional rotation segmentation.
+5. Conditional page computes `P(point won by selected team | first receiving attack quality)`.
+
 ## Module map
 
 - `dvolley/ui/pages/setup.py`: DB sync, reload, model fitting, downloads.
 - `dvolley/ui/pages/detailed_analysis.py`: shared selectors plus phase radio.
+- `dvolley/ui/pages/descriptive_stats.py`: event-level descriptive touch statistics with attack-quality drilldown.
+- `dvolley/ui/pages/conditional_breakpoint.py`: conditional point-won summaries by first-attack quality.
 - `dvolley/ui/pages/breakpoint_touch.py`: breakpoint touch tables.
 - `dvolley/ui/pages/sideout_touch.py`: sideout touch tables.
 - `dvolley/ui/pages/rotation.py`: rotation simulation.

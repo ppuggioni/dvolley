@@ -10,13 +10,14 @@ See `ARCHITECTURE.md` for the full data and runtime flow.
 - Fit logistic and empirical models from DB rally data.
 - Run rotation simulations from fitted parameters.
 - Run touch-by-touch **Detailed Analysis** (Breakpoint/Sideout) with team-first filtering.
+- Run **Descriptive Statistics** for sideout/breakpoint event and attack-quality summaries.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `app.py` | Streamlit entrypoint and page routing. |
-| `dvolley/ui/pages/` | App pages: Setup, Detailed Analysis, Rotation, Teams Summary, Model Analysis. |
+| `dvolley/ui/pages/` | App pages: Setup, Detailed Analysis, Descriptive Statistics, Conditional Breakpoint Probability, Rotation, Teams Summary, Model Analysis. |
 | `dvolley/domain/` | Core logic: modeling, simulation, breakpoint/sideout touch analysis. |
 | `dvolley/services/` | DB/GDrive integration and data-loading orchestration. |
 | `dvolley/data/` | DVW parsers and date normalization helpers. |
@@ -48,6 +49,7 @@ Configure credentials in `st.secrets` for:
 3. Load DB into app and fit a model.
 4. Use:
    - **Detailed Analysis** for touch-by-touch breakpoint/sideout tables.
+   - **Descriptive Statistics** for event-level and attack-quality point-won summaries.
    - **Rotation Simulator** for 6x6 win-probability grids.
    - **Teams Summary** and **Model Analysis** for fitted-parameter diagnostics.
 
@@ -61,21 +63,38 @@ Configure credentials in `st.secrets` for:
 - Useful to inspect reception/serve quality classes, rotation splits, and player summaries.
 - Team and match selectors are driven by rally data; touch rows are loaded only for selected matches.
 
+### Descriptive Statistics
+
+- Team-first, match-filtered touch analysis with a phase selector:
+  - **Sideout**: selected team is receiving.
+  - **Breakpoint**: selected team is serving.
+- Event table reports:
+  - `Actions`, `% share`, `Successful`, `% successful`.
+  - Optional segment columns by rotation (`Total`, `P1`..`P6`), where `% share` is computed within each segment.
+- Sideout mode includes a flag to exclude opponent serve errors from stats.
+- Event drilldown table breaks selected event rows (e.g. `+`) by first attack quality.
+
 ### Conditional Breakpoint Probability
 
-- Estimates `P(Breakpoint | first receiving attack quality)`.
+- Estimates `P(point won by selected team | first receiving attack quality)`.
 - Two interpretations:
-  - **Team sideout**: breakpoint = opponent wins rally.
-  - **Team breakpoint**: breakpoint = selected team wins rally.
+  - **Team sideout**: selected team is receiving.
+  - **Team breakpoint**: selected team is serving.
 - Excludes rallies with no first receiving attack.
 - Includes share columns:
   - `Condition_share_of_first_attacks`: frequency of each quality over all analyzed first attacks.
   - `Condition_share_within_rotation`: quality mix inside each rotation.
   - `Condition_share_within_player`: quality mix inside each player (sideout mode).
+- Outcome columns are shown as selected-team point outcomes:
+  - `Point_won_count`
+  - `Point_won_probability`
 
-## Important behavior: Detailed Analysis loading
+## Important behavior: touch-analysis loading
 
-- Team and match lists come from the already-loaded rally dataset (`loader.data`).
+- Team and match lists come from the already-loaded rally dataset (`loader.data`) for:
+  - Detailed Analysis
+  - Descriptive Statistics
+  - Conditional Breakpoint Probability
 - Touch rows are fetched from Supabase **only after** selecting team and matches.
 - DB query is limited to selected `match_alternative_id` values (`load_matches_data_from_db`).
 - This avoids loading the full touch table for every visit.

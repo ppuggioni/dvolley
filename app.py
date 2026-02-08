@@ -17,6 +17,7 @@ from dvolley.ui.pages.setup import fit_selected_model
 from dvolley.ui.pages.model_analysis import page_model_analysis
 from dvolley.ui.pages.conditional_breakpoint import page_conditional_breakpoint_main
 from dvolley.ui.pages.detailed_analysis import page_detailed_analysis_main
+from dvolley.ui.pages.descriptive_stats import page_descriptive_stats_main
 from dvolley.ui.pages.rotation import page_rotation_main
 from dvolley.ui.pages.teams_summary import page_teams_summary
 from dvolley.ui.pages.wip import wip_page_main
@@ -32,6 +33,7 @@ PAGE_ROTATION = "Rotation Simulator"
 PAGE_TEAMS_SUMMARY = "Teams Summary"
 PAGE_MODEL_ANALYSIS = "Model Analysis"
 PAGE_DETAILED_ANALYSIS = "Detailed Analysis"
+PAGE_DESCRIPTIVE_STATS = "Descriptive Statistics"
 PAGE_CONDITIONAL_BP = "Conditional Breakpoint Probability"
 PAGE_WIP = "Work in Progress"
 DEFAULT_AUTO_MODEL = "logistic_rotation_alpha_0.005"
@@ -127,6 +129,7 @@ def main():
         options=[
             PAGE_SETUP,
             PAGE_DETAILED_ANALYSIS,
+            PAGE_DESCRIPTIVE_STATS,
             PAGE_CONDITIONAL_BP,
             PAGE_ROTATION,
             PAGE_TEAMS_SUMMARY,
@@ -145,6 +148,8 @@ def main():
         page_setup_status(loader, last_match_date=last_match_date)
     elif page == PAGE_DETAILED_ANALYSIS:
         page_detailed_analysis_main(loader)
+    elif page == PAGE_DESCRIPTIVE_STATS:
+        page_descriptive_stats_main(loader)
     elif page == PAGE_CONDITIONAL_BP:
         page_conditional_breakpoint_main(loader)
     elif page == PAGE_ROTATION:

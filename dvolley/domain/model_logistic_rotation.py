@@ -3,8 +3,9 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from typing import Optional
 
+from dvolley.domain.model_base import BaseModel
 
-class VolleyballBreakpointSideoutRegModelNoHome:
+class LogisticRotationModelNoHome(BaseModel):
     """
     Logistic-regression volleyball model WITHOUT home effect.
 
@@ -119,16 +120,21 @@ class VolleyballBreakpointSideoutRegModelNoHome:
             dayfirst=True,
             dtype={"team_id_h": str, "team_id_a": str},  # Ensure team IDs are strings
         )
-        df["match_date"] = pd.to_datetime(df["match_date"], format='mixed', dayfirst=True)
-        
-        # Double-check team_id columns are strings (in case dtype was ignored)
-        for col in ["team_id_h", "team_id_a"]:
-            if col in df.columns:
-                df[col] = df[col].astype(str)
+        return self.load_dataframe(df)
+
+    def load_dataframe(self, df: pd.DataFrame):
+        df = df.copy()
 
         missing = [c for c in self.REQUIRED_COLS if c not in df.columns]
         if missing:
             raise ValueError(f"Missing columns in input CSV: {missing}")
+
+        df["match_date"] = pd.to_datetime(df["match_date"], format="mixed", dayfirst=True)
+
+        # Double-check team_id columns are strings (in case dtype was ignored)
+        for col in ["team_id_h", "team_id_a"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str)
 
         # build team index space
         all_team_ids = pd.Index(
@@ -200,6 +206,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
 
         # build constrained design matrix
         self._build_design_matrix_effects()
+        return self
 
     def _compute_empirical_buckets(self):
         """
@@ -310,9 +317,12 @@ class VolleyballBreakpointSideoutRegModelNoHome:
     # ------------------------------------------------------------------
     # fit
     # ------------------------------------------------------------------
-    def fit(self):
+    def fit(self, df: Optional[pd.DataFrame] = None):
+        if df is not None:
+            self.load_dataframe(df)
+
         if self.X is None:
-            raise RuntimeError("Call load_data(...) first.")
+            raise RuntimeError("Call fit(df) or load_data(...) first.")
 
         # Convert alpha to C (C = 1 / (alpha * n_samples))
         # SGD minimizes: (1/n) * sum(loss) + alpha * penalty
@@ -330,6 +340,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
         )
         clf.fit(self.X, self.y, sample_weight=self.weights)
         self.model = clf
+        return self
 
     def predict_proba_breakpoint(self, df_new):
         """Predict break point probability for new data.
@@ -399,6 +410,16 @@ class VolleyballBreakpointSideoutRegModelNoHome:
     def predict_proba(self, df_new):
         """Alias for predict_proba_breakpoint for backward compatibility."""
         return self.predict_proba_breakpoint(df_new)
+
+    @property
+    def name(self) -> str:
+        return f"logistic_rotation_alpha_{self.alpha}"
+
+    def get_simulator_params(self) -> dict:
+        return {
+            "type": "logistic",
+            "params": self.viz_parameters(),
+        }
 
     # ------------------------------------------------------------------
     # viz / export
@@ -540,7 +561,7 @@ class VolleyballBreakpointSideoutRegModelNoHome:
 
 # example usage
 if __name__ == "__main__":
-    m = VolleyballBreakpointSideoutRegModelNoHome()
+    m = LogisticRotationModelNoHome()
     m.load_data("./clean_data/clean_data.csv")  # put your csv here
     m.fit()
     params_df = m.viz_parameters(save_path="./params/params_out_break_sideout.csv")
