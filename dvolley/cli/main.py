@@ -3,7 +3,7 @@ import logging
 
 import pandas as pd
 
-from dvolley.domain.analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
+from dvolley.domain.model_logistic_rotation import LogisticRotationModelNoHome
 from dvolley.services.data_loader import update_database, update_database_full, load_data_from_db
 from dvolley.services.db import delete_all_rallies, delete_all_touches
 from dvolley.services.maintenance import normalize_dates
@@ -51,7 +51,7 @@ def cmd_fit_model(args: argparse.Namespace) -> None:
         logger.error("No rally data available. Load data from DB first.")
         return
 
-    model = VolleyballBreakpointSideoutRegModelNoHome(
+    model = LogisticRotationModelNoHome(
         half_life_days=90.0,
         alpha=args.alpha,
         max_iter=5000,
@@ -73,23 +73,10 @@ def cmd_fit_model(args: argparse.Namespace) -> None:
         if col in clean_df.columns:
             clean_df[col] = clean_df[col].astype(str)
 
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as tmp:
-        tmp_path = tmp.name
-        clean_df.to_csv(tmp_path, index=False, encoding="utf-8")
-
-    try:
-        model.load_data(tmp_path, encoding="utf-8")
-        model.fit()
-        params_df = model.viz_parameters()
-        params_df.to_csv(args.out, index=False)
-        logger.info("Saved parameters to %s", args.out)
-    finally:
-        import os
-
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    model.fit(clean_df)
+    params_df = model.viz_parameters()
+    params_df.to_csv(args.out, index=False)
+    logger.info("Saved parameters to %s", args.out)
 
 
 def build_parser() -> argparse.ArgumentParser:

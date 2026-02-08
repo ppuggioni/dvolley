@@ -7,12 +7,8 @@ from dvolley.domain.backtest_engine import (
     calculate_metrics,
     plot_calibration,
 )
-from dvolley.domain.models import (
-    LogisticRegressionModel,
-    EmpiricalModel,
-    SimpleEmpiricalModel,
-    GlobalMeanModel,
-)
+from dvolley.domain.model_logistic_rotation import LogisticRotationModelNoHome
+from dvolley.domain.model_empirical import EmpiricalModel, GlobalMeanModel, SimpleEmpiricalModel
 from dvolley.services.data_loader import load_data_from_db
 
 
@@ -56,7 +52,7 @@ def page_model_analysis():
     def get_model_instance(name):
         if name.startswith("logistic_rotation_alpha_"):
             alpha = float(name.split("_")[-1])
-            return LogisticRegressionModel(alpha=alpha)
+            return LogisticRotationModelNoHome(alpha=alpha)
         if name == "empirical_global_only":
             return GlobalMeanModel()
         if name == "empirical_team":

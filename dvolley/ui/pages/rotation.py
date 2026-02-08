@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-from dvolley.domain.analysis_regr import VolleyballBreakpointSideoutRegModelNoHome
+from dvolley.domain.model_logistic_rotation import LogisticRotationModelNoHome
 from dvolley.domain.simulator import VolleyballPointByPointSimulator, VolleyballProbabilitySimulator
 from dvolley.config import DEFAULT_ALPHA
 
@@ -35,7 +35,7 @@ def refit_model_on_current_data(
     rally_df: pd.DataFrame,
     alpha: float = DEFAULT_ALPHA,
 ) -> pd.DataFrame:
-    model = VolleyballBreakpointSideoutRegModelNoHome(
+    model = LogisticRotationModelNoHome(
         half_life_days=90.0,
         alpha=alpha,
         max_iter=5000,
@@ -53,25 +53,12 @@ def refit_model_on_current_data(
         clean_df = clean_df.copy()
         clean_df["match_date"] = pd.to_datetime(clean_df["match_date"], format="mixed", dayfirst=True)
 
-    import tempfile
-
     for col in ["team_id_h", "team_id_a"]:
         if col in clean_df.columns:
             clean_df[col] = clean_df[col].astype(str)
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as tmp:
-        tmp_path = tmp.name
-        clean_df.to_csv(tmp_path, index=False, encoding="utf-8")
-
-    try:
-        model.load_data(tmp_path, encoding="utf-8")
-        model.fit()
-        return model.viz_parameters()
-    finally:
-        import os
-
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    model.fit(clean_df)
+    return model.viz_parameters()
 
 
 def slider_sidebar(label: str, key: str, component=None):

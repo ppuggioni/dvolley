@@ -3,12 +3,8 @@ import streamlit as st
 import pandas as pd
 
 from dvolley.config import DEFAULT_ALPHA
-from dvolley.domain.models import (
-    LogisticRegressionModel,
-    EmpiricalModel,
-    SimpleEmpiricalModel,
-    GlobalMeanModel,
-)
+from dvolley.domain.model_logistic_rotation import LogisticRotationModelNoHome
+from dvolley.domain.model_empirical import EmpiricalModel, GlobalMeanModel, SimpleEmpiricalModel
 from dvolley.services.data_loader import (
     update_database,
     update_database_full,
@@ -27,7 +23,7 @@ def _safe_rerun():
 def _get_model_instance(name: str):
     if name.startswith("logistic_rotation_alpha_"):
         alpha = float(name.split("_")[-1])
-        return LogisticRegressionModel(alpha=alpha)
+        return LogisticRotationModelNoHome(alpha=alpha)
     if name == "empirical_global_only":
         return GlobalMeanModel()
     if name == "empirical_team":

@@ -14,7 +14,8 @@
    - Pages in `dvolley/ui/pages/` consume loader data and on-demand DB queries.
 
 3. **Domain layer**
-   - `analysis_regr.py` and `models.py` fit model parameters.
+   - `model_logistic_rotation.py` fits the logistic breakpoint/sideout model.
+   - `model_empirical.py` contains empirical baselines with the shared model interface.
    - `simulator.py` computes point/set/match probabilities.
    - `breakpoint_touch_analysis.py` and `sideout_touch_analysis.py` build touch-based tables.
 
