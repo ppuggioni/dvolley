@@ -215,6 +215,10 @@ def test_sideout_summary_counts_serve_errors_and_uses_within_rotation_share():
     assert summary.loc["SERVE_ERROR", ("Total", "Actions")] == 1
     assert summary.loc["SERVE_ERROR", ("Total", "Successful")] == 1
     assert summary.loc["SERVE_ERROR", ("Total", "% successful")] == pytest.approx(1.0)
+    assert ("Total", "% share 95% CI low") in summary.columns
+    assert ("Total", "% share 95% CI high") in summary.columns
+    assert 0.0 <= summary.loc["SERVE_ERROR", ("Total", "% successful 95% CI low")] <= 1.0
+    assert 0.0 <= summary.loc["SERVE_ERROR", ("Total", "% successful 95% CI high")] <= 1.0
 
     assert summary.loc["+", ("P1", "Actions")] == 1
     assert summary.loc["+", ("P1", "% share")] == pytest.approx(0.5)
@@ -269,6 +273,11 @@ def test_breakpoint_summary_and_drilldown_for_plus():
     assert summary.loc["+", ("Total", "Actions")] == 2
     assert summary.loc["+", ("Total", "Successful")] == 1
     assert summary.loc["+", ("Total", "% successful")] == pytest.approx(0.5)
+    assert (
+        summary.loc["+", ("Total", "% successful 95% CI low")]
+        <= summary.loc["+", ("Total", "% successful")]
+        <= summary.loc["+", ("Total", "% successful 95% CI high")]
+    )
 
     drilldown = build_attack_quality_drilldown_table(
         rallies_df=result.rallies_df,

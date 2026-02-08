@@ -1,7 +1,7 @@
 test.txt
 rotation_win_prob.csv
 clean_data.csv
-
+.data_temp/
 
 # ---- Python ----
 __pycache__/

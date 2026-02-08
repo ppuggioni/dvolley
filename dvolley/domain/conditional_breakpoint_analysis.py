@@ -6,6 +6,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from dvolley.domain.bayesian_stats import add_beta_interval_columns
+
 
 ATTACK_QUALITY_CODES = ["#", "+", "!", "-", "/", "="]
 
@@ -237,10 +239,24 @@ def _build_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
         base["Attempts"] / total_attempts,
         np.nan,
     )
+    base["Condition_share_of_first_attacks_trials"] = float(total_attempts) if total_attempts > 0 else np.nan
+    base = add_beta_interval_columns(
+        base,
+        successes_col="Attempts",
+        trials_col="Condition_share_of_first_attacks_trials",
+        prefix="Condition_share_of_first_attacks",
+    )
+    base = base.drop(columns="Condition_share_of_first_attacks_trials")
     base["Point_won_probability"] = np.where(
         base["Attempts"] > 0,
         base["Point_won_count"] / base["Attempts"],
         np.nan,
+    )
+    base = add_beta_interval_columns(
+        base,
+        successes_col="Point_won_count",
+        trials_col="Attempts",
+        prefix="Point_won_probability",
     )
     base = _sort_quality_column(base, "Attack_quality")
 
@@ -256,8 +272,24 @@ def _build_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
                     if base["Attempts"].sum() > 0
                     else np.nan
                 ),
+                "Condition_share_of_first_attacks_trials": float(total_attempts)
+                if total_attempts > 0
+                else np.nan,
             }
         ]
+    )
+    total = add_beta_interval_columns(
+        total,
+        successes_col="Attempts",
+        trials_col="Condition_share_of_first_attacks_trials",
+        prefix="Condition_share_of_first_attacks",
+    )
+    total = total.drop(columns="Condition_share_of_first_attacks_trials")
+    total = add_beta_interval_columns(
+        total,
+        successes_col="Point_won_count",
+        trials_col="Attempts",
+        prefix="Point_won_probability",
     )
     return pd.concat([base, total], ignore_index=True)
 
@@ -278,15 +310,38 @@ def _build_rotation_quality_summary(rally_df: pd.DataFrame) -> pd.DataFrame:
         base["Attempts"] / total_attempts,
         np.nan,
     )
+    base["Condition_share_of_first_attacks_trials"] = float(total_attempts) if total_attempts > 0 else np.nan
+    base = add_beta_interval_columns(
+        base,
+        successes_col="Attempts",
+        trials_col="Condition_share_of_first_attacks_trials",
+        prefix="Condition_share_of_first_attacks",
+    )
+    base = base.drop(columns="Condition_share_of_first_attacks_trials")
+    rotation_totals = base.groupby("Rotation")["Attempts"].transform("sum")
     base["Condition_share_within_rotation"] = np.where(
-        base.groupby("Rotation")["Attempts"].transform("sum") > 0,
-        base["Attempts"] / base.groupby("Rotation")["Attempts"].transform("sum"),
+        rotation_totals > 0,
+        base["Attempts"] / rotation_totals,
         np.nan,
     )
+    base["Condition_share_within_rotation_trials"] = np.where(rotation_totals > 0, rotation_totals, np.nan)
+    base = add_beta_interval_columns(
+        base,
+        successes_col="Attempts",
+        trials_col="Condition_share_within_rotation_trials",
+        prefix="Condition_share_within_rotation",
+    )
+    base = base.drop(columns="Condition_share_within_rotation_trials")
     base["Point_won_probability"] = np.where(
         base["Attempts"] > 0,
         base["Point_won_count"] / base["Attempts"],
         np.nan,
+    )
+    base = add_beta_interval_columns(
+        base,
+        successes_col="Point_won_count",
+        trials_col="Attempts",
+        prefix="Point_won_probability",
     )
     base = _sort_quality_column(base, "Attack_quality")
     return base.sort_values(["Rotation", "Attack_quality"]).reset_index(drop=True)
@@ -331,10 +386,24 @@ def _build_player_tables(rally_df: pd.DataFrame, mode: str) -> tuple[pd.DataFram
         by_player["Attempts"] / total_attempts,
         np.nan,
     )
+    by_player["Condition_share_of_first_attacks_trials"] = float(total_attempts) if total_attempts > 0 else np.nan
+    by_player = add_beta_interval_columns(
+        by_player,
+        successes_col="Attempts",
+        trials_col="Condition_share_of_first_attacks_trials",
+        prefix="Condition_share_of_first_attacks",
+    )
+    by_player = by_player.drop(columns="Condition_share_of_first_attacks_trials")
     by_player["Point_won_probability"] = np.where(
         by_player["Attempts"] > 0,
         by_player["Point_won_count"] / by_player["Attempts"],
         np.nan,
+    )
+    by_player = add_beta_interval_columns(
+        by_player,
+        successes_col="Point_won_count",
+        trials_col="Attempts",
+        prefix="Point_won_probability",
     )
     by_player = by_player.sort_values(["Attempts", "Point_won_count"], ascending=[False, False]).reset_index(drop=True)
 
@@ -358,15 +427,40 @@ def _build_player_tables(rally_df: pd.DataFrame, mode: str) -> tuple[pd.DataFram
         by_player_quality["Attempts"] / total_attempts_by_player_quality,
         np.nan,
     )
+    by_player_quality["Condition_share_of_first_attacks_trials"] = (
+        float(total_attempts_by_player_quality) if total_attempts_by_player_quality > 0 else np.nan
+    )
+    by_player_quality = add_beta_interval_columns(
+        by_player_quality,
+        successes_col="Attempts",
+        trials_col="Condition_share_of_first_attacks_trials",
+        prefix="Condition_share_of_first_attacks",
+    )
+    by_player_quality = by_player_quality.drop(columns="Condition_share_of_first_attacks_trials")
+    player_totals = by_player_quality.groupby("Player")["Attempts"].transform("sum")
     by_player_quality["Condition_share_within_player"] = np.where(
-        by_player_quality.groupby("Player")["Attempts"].transform("sum") > 0,
-        by_player_quality["Attempts"] / by_player_quality.groupby("Player")["Attempts"].transform("sum"),
+        player_totals > 0,
+        by_player_quality["Attempts"] / player_totals,
         np.nan,
     )
+    by_player_quality["Condition_share_within_player_trials"] = np.where(player_totals > 0, player_totals, np.nan)
+    by_player_quality = add_beta_interval_columns(
+        by_player_quality,
+        successes_col="Attempts",
+        trials_col="Condition_share_within_player_trials",
+        prefix="Condition_share_within_player",
+    )
+    by_player_quality = by_player_quality.drop(columns="Condition_share_within_player_trials")
     by_player_quality["Point_won_probability"] = np.where(
         by_player_quality["Attempts"] > 0,
         by_player_quality["Point_won_count"] / by_player_quality["Attempts"],
         np.nan,
+    )
+    by_player_quality = add_beta_interval_columns(
+        by_player_quality,
+        successes_col="Point_won_count",
+        trials_col="Attempts",
+        prefix="Point_won_probability",
     )
     by_player_quality = _sort_quality_column(by_player_quality, "Attack_quality")
     by_player_quality = by_player_quality.sort_values(["Player", "Attack_quality"]).reset_index(drop=True)
