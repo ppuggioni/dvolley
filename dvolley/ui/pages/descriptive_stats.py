@@ -10,6 +10,7 @@ from dvolley.domain.descriptive_touch_stats import (
     get_event_display_label,
 )
 from dvolley.services.data_loader import load_matches_data_from_db
+from dvolley.ui.coloring import build_style_matrix
 
 
 @st.cache_data(show_spinner=False)
@@ -76,7 +77,7 @@ def _extract_team_matches_from_rallies(rallies_df: pd.DataFrame, team_id: str) -
     return base.sort_values("match_date").reset_index(drop=True)
 
 
-def _format_stats_table(df: pd.DataFrame) -> pd.DataFrame:
+def _prepare_stats_table(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if isinstance(out.columns, pd.MultiIndex):
         low_suffix = " 95% CI low"
@@ -117,16 +118,61 @@ def _format_stats_table(df: pd.DataFrame) -> pd.DataFrame:
                 if metric not in used_metrics:
                     ordered_cols.append((segment, metric))
         out = out.reindex(columns=ordered_cols)
+    return out
 
-    for col in out.columns:
+
+def _build_stats_table_styler(
+    display_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
+):
+    if not isinstance(display_df.columns, pd.MultiIndex):
+        return display_df
+
+    def baseline_fn(raw: pd.DataFrame, idx: object, col: object) -> object:
+        if not isinstance(col, tuple) or len(col) != 2:
+            return None
+        segment, metric = col
+        if metric == "% successful":
+            if segment != "Total" and ("Total", "% successful") in raw.columns:
+                return raw.at[idx, ("Total", "% successful")]
+            if "Grand total" in raw.index and (segment, "% successful") in raw.columns:
+                return raw.at["Grand total", (segment, "% successful")]
+            return None
+        if metric == "% share":
+            if segment == "Total" or ("Total", "% share") not in raw.columns:
+                return None
+            return raw.at[idx, ("Total", "% share")]
+        return None
+
+    def ci_column_fn(col: object) -> tuple[object | None, object | None]:
+        if not isinstance(col, tuple) or len(col) != 2:
+            return (None, None)
+        segment, metric = col
+        return ((segment, f"{metric} 95% CI low"), (segment, f"{metric} 95% CI high"))
+
+    target_cols = [
+        col
+        for col in display_df.columns
+        if isinstance(col, tuple) and len(col) == 2 and col[1] in {"% share", "% successful"}
+    ]
+    style_matrix = build_style_matrix(
+        display_df,
+        raw_df,
+        columns=target_cols,
+        baseline_fn=baseline_fn,
+        ci_column_fn=ci_column_fn,
+        skip_rows={"Grand total"},
+    )
+    formatters = {}
+    for col in display_df.columns:
         metric_name = col[1] if isinstance(col, tuple) and len(col) > 1 else str(col)
-        if str(metric_name).endswith(" CI"):
+        if str(metric_name).endswith("CI"):
             continue
         if "%" in str(metric_name):
-            out[col] = out[col].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
+            formatters[col] = lambda x: f"{x:.2%}" if pd.notna(x) else "-"
         else:
-            out[col] = out[col].apply(lambda x: int(x) if pd.notna(x) else 0)
-    return out
+            formatters[col] = lambda x: int(x) if pd.notna(x) else 0
+    return display_df.style.apply(lambda _: style_matrix, axis=None).format(formatters)
 
 
 def _display_with_labels(df: pd.DataFrame) -> pd.DataFrame:
@@ -264,8 +310,13 @@ def page_descriptive_stats_main(loader):
         "Columns report Actions, share within segment, Successful points, success rate, and Bayesian 95% CI "
         "(Beta(1,1) prior)."
     )
-    summary_display = _display_with_labels(_format_stats_table(result.summary_table))
-    st.dataframe(summary_display, use_container_width=True)
+    summary_raw = _display_with_labels(result.summary_table.copy())
+    summary_display = _prepare_stats_table(summary_raw)
+    summary_styler = _build_stats_table_styler(
+        summary_display,
+        summary_raw,
+    )
+    st.dataframe(summary_styler, use_container_width=True)
 
     if not result.event_keys:
         st.info("No event rows available for attack-quality drilldown.")
@@ -288,4 +339,9 @@ def page_descriptive_stats_main(loader):
     if drilldown.empty:
         st.info("No attack-quality rows available for this event.")
         return
-    st.dataframe(_format_stats_table(drilldown), use_container_width=True)
+    drilldown_display = _prepare_stats_table(drilldown)
+    drilldown_styler = _build_stats_table_styler(
+        drilldown_display,
+        drilldown,
+    )
+    st.dataframe(drilldown_styler, use_container_width=True)
