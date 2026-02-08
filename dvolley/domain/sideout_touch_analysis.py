@@ -6,6 +6,7 @@ from typing import Dict, Iterable, Optional
 import numpy as np
 import pandas as pd
 
+from dvolley.domain.bayesian_stats import add_beta_interval_columns
 from dvolley.domain.breakpoint_touch_analysis import extract_team_matches
 
 
@@ -381,7 +382,22 @@ def _build_rotation_summary(receive_rallies: pd.DataFrame) -> pd.DataFrame:
         ],
         index=["Total"],
     )
-    return pd.concat([out, total_row], axis=0)
+    out = pd.concat([out, total_row], axis=0)
+    out["_points_with_errors"] = out["Points"] + out["Opponent_serve_errors"]
+    out["_actions_with_errors"] = out["Actions"] + out["Opponent_serve_errors"]
+    out = add_beta_interval_columns(
+        out,
+        successes_col="_points_with_errors",
+        trials_col="_actions_with_errors",
+        prefix="% points WITH opp serve errors",
+    )
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Points",
+        trials_col="Actions",
+        prefix="% points WITHOUT opp serve errors",
+    )
+    return out.drop(columns=["_points_with_errors", "_actions_with_errors"])
 
 
 def _build_attacker_summary(receive_rallies: pd.DataFrame) -> pd.DataFrame:
@@ -394,6 +410,8 @@ def _build_attacker_summary(receive_rallies: pd.DataFrame) -> pd.DataFrame:
                 "Points",
                 "Blocked_or_errors",
                 "% points on attacks",
+                "% points on attacks 95% CI low",
+                "% points on attacks 95% CI high",
                 "% efficiency",
             ]
         )
@@ -409,6 +427,12 @@ def _build_attacker_summary(receive_rallies: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"first_attack_player_name": "player_name"})
     )
     out["% points on attacks"] = np.where(out["Attacks"] > 0, out["Points"] / out["Attacks"], np.nan)
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Points",
+        trials_col="Attacks",
+        prefix="% points on attacks",
+    )
     out["% efficiency"] = np.where(
         out["Attacks"] > 0,
         (out["Points"] - out["Blocked_or_errors"]) / out["Attacks"],
@@ -458,6 +482,28 @@ def _build_class_summary(receive_rallies: pd.DataFrame, class_order: list[str]) 
         index=["Total"],
     )
     out = pd.concat([totals, total_row], axis=0)
+    out["_total_actions_trials"] = float(total_actions) if total_actions > 0 else np.nan
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Total_actions",
+        trials_col="_total_actions_trials",
+        prefix="% of total actions",
+    )
+    out = out.drop(columns="_total_actions_trials")
+    out["_total_points_trials"] = float(total_points) if total_points > 0 else np.nan
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Points_scored",
+        trials_col="_total_points_trials",
+        prefix="% of total points",
+    )
+    out = out.drop(columns="_total_points_trials")
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Points_scored",
+        trials_col="Total_actions",
+        prefix="% points on actions",
+    )
     out.index.name = "Class"
     return out
 
@@ -492,7 +538,14 @@ def _build_class_rotation_tables(
             ],
             index=["Total"],
         )
-        out[class_name] = pd.concat([base, total_row], axis=0)
+        table = pd.concat([base, total_row], axis=0)
+        table = add_beta_interval_columns(
+            table,
+            successes_col="Sideout_points",
+            trials_col="Actions",
+            prefix="%",
+        )
+        out[class_name] = table
     return out
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from dvolley.domain.bayesian_stats import format_ci_range
 from dvolley.domain.descriptive_touch_stats import (
     build_attack_quality_drilldown_table,
     build_descriptive_touch_stats,
@@ -77,8 +78,50 @@ def _extract_team_matches_from_rallies(rallies_df: pd.DataFrame, team_id: str) -
 
 def _format_stats_table(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        low_suffix = " 95% CI low"
+        high_suffix = " 95% CI high"
+        drop_cols = []
+        for col in list(out.columns):
+            metric_name = str(col[1]) if isinstance(col, tuple) and len(col) > 1 else str(col)
+            if not metric_name.endswith(low_suffix):
+                continue
+            prefix = metric_name[: -len(low_suffix)]
+            high_col = (col[0], f"{prefix}{high_suffix}")
+            if high_col not in out.columns:
+                continue
+            ci_col = (col[0], f"{prefix} CI")
+            out[ci_col] = [format_ci_range(lo, hi) for lo, hi in zip(out[col], out[high_col])]
+            drop_cols.extend([col, high_col])
+        if drop_cols:
+            out = out.drop(columns=drop_cols)
+
+        preferred_metric_order = [
+            "Actions",
+            "% share",
+            "% share CI",
+            "Successful",
+            "% successful",
+            "% successful CI",
+        ]
+        ordered_cols = []
+        segments = list(dict.fromkeys(out.columns.get_level_values(0).tolist()))
+        for segment in segments:
+            segment_metrics = [c[1] for c in out.columns if c[0] == segment]
+            used_metrics = []
+            for metric in preferred_metric_order:
+                if metric in segment_metrics:
+                    ordered_cols.append((segment, metric))
+                    used_metrics.append(metric)
+            for metric in segment_metrics:
+                if metric not in used_metrics:
+                    ordered_cols.append((segment, metric))
+        out = out.reindex(columns=ordered_cols)
+
     for col in out.columns:
         metric_name = col[1] if isinstance(col, tuple) and len(col) > 1 else str(col)
+        if str(metric_name).endswith(" CI"):
+            continue
         if "%" in str(metric_name):
             out[col] = out[col].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
         else:
@@ -218,7 +261,8 @@ def page_descriptive_stats_main(loader):
 
     st.markdown("### Event Summary")
     st.caption(
-        "Columns report Actions, share within segment, Successful points, and success rate."
+        "Columns report Actions, share within segment, Successful points, success rate, and Bayesian 95% CI "
+        "(Beta(1,1) prior)."
     )
     summary_display = _display_with_labels(_format_stats_table(result.summary_table))
     st.dataframe(summary_display, use_container_width=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from dvolley.domain.bayesian_stats import format_ci_range
 from dvolley.domain.conditional_breakpoint_analysis import (
     ConditionalBreakpointResult,
     build_conditional_breakpoint_analysis,
@@ -76,11 +77,57 @@ def _extract_team_matches_from_rallies(rallies_df: pd.DataFrame, team_id: str) -
 
 def _format_probability_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    low_suffix = " 95% CI low"
+    high_suffix = " 95% CI high"
+    for col in list(out.columns):
+        col_name = str(col)
+        if not col_name.endswith(low_suffix):
+            continue
+        prefix = col_name[: -len(low_suffix)]
+        high_col = f"{prefix}{high_suffix}"
+        if high_col not in out.columns:
+            continue
+        ci_col = f"{prefix} CI"
+        out[ci_col] = [format_ci_range(lo, hi) for lo, hi in zip(out[col], out[high_col])]
+        out = out.drop(columns=[col, high_col])
+
     for col in out.columns:
-        c = str(col)
-        if "probability" in c.lower() or "share" in c.lower():
+        c = str(col).lower()
+        if str(col).endswith(" CI"):
+            continue
+        if "probability" in c or "share" in c:
             out[col] = out[col].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
     return out
+
+
+def _format_probability_with_ci(prob: object, low: object, high: object) -> str:
+    if pd.isna(prob):
+        return "-"
+    return f"{prob:.2%} {format_ci_range(low, high)}"
+
+
+def _build_rotation_probability_with_ci_table(result: ConditionalBreakpointResult) -> pd.DataFrame:
+    source = result.rotation_quality_summary
+    if source is None or source.empty:
+        return pd.DataFrame()
+
+    out = source.copy()
+    out["Point_won_probability_with_ci"] = out.apply(
+        lambda row: _format_probability_with_ci(
+            row.get("Point_won_probability"),
+            row.get("Point_won_probability 95% CI low"),
+            row.get("Point_won_probability 95% CI high"),
+        ),
+        axis=1,
+    )
+    pivot = out.pivot(
+        index="Rotation",
+        columns="Attack_quality",
+        values="Point_won_probability_with_ci",
+    )
+    if result.rotation_probability_pivot is not None and not result.rotation_probability_pivot.empty:
+        pivot = pivot.reindex(index=result.rotation_probability_pivot.index, columns=result.rotation_probability_pivot.columns)
+    return pivot
 
 
 def _render_main_tables(result: ConditionalBreakpointResult, mode: str):
@@ -90,11 +137,8 @@ def _render_main_tables(result: ConditionalBreakpointResult, mode: str):
     st.markdown(f"### Breakdown by Rotation ({result.rotation_axis_label})")
     st.dataframe(_format_probability_columns(result.rotation_quality_summary), use_container_width=True)
 
-    st.markdown("### Rotation x Attack Quality (Point-Won Probability)")
-    pivot_fmt = result.rotation_probability_pivot.copy()
-    for col in pivot_fmt.columns:
-        pivot_fmt[col] = pivot_fmt[col].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
-    st.dataframe(pivot_fmt, use_container_width=True)
+    st.markdown("### Rotation x Attack Quality (Point-Won Probability + 95% CI)")
+    st.dataframe(_build_rotation_probability_with_ci_table(result), use_container_width=True)
 
     if mode == "sideout":
         st.markdown("### Sideout only: Player Breakdown (First Attack)")
@@ -116,7 +160,8 @@ def page_conditional_breakpoint_main(loader):
             "- Rallies without a first receiving attack are excluded.\n"
             "- `Condition_share_of_first_attacks` shows how frequent each quality is in the analyzed sample "
             "(for example, 400/887 = 45.1%).\n"
-            "- `Condition_share_within_rotation` and `Condition_share_within_player` are local composition shares."
+            "- `Condition_share_within_rotation` and `Condition_share_within_player` are local composition shares.\n"
+            "- Point-won probabilities include Bayesian 95% credible intervals (Beta(1,1) prior)."
         )
 
     mode_label = st.radio(

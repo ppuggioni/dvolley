@@ -6,6 +6,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from dvolley.domain.bayesian_stats import add_beta_interval_columns
 from dvolley.domain.breakpoint_touch_analysis import build_breakpoint_touch_analysis
 from dvolley.domain.conditional_breakpoint_analysis import build_conditional_breakpoint_analysis
 from dvolley.domain.sideout_touch_analysis import build_sideout_touch_analysis
@@ -221,9 +222,94 @@ def _build_condition_table(
             row[(segment_name, "% share")] = share
             row[(segment_name, "Successful")] = success
             row[(segment_name, "% successful")] = success_rate
+            share_stats = add_beta_interval_columns(
+                pd.DataFrame(
+                    [
+                        {
+                            "Actions": actions,
+                            "Denominator": denominator if denominator > 0 else np.nan,
+                        }
+                    ]
+                ),
+                successes_col="Actions",
+                trials_col="Denominator",
+                prefix="% share",
+            ).iloc[0]
+            row[(segment_name, "% share 95% CI low")] = share_stats["% share 95% CI low"]
+            row[(segment_name, "% share 95% CI high")] = share_stats["% share 95% CI high"]
+            segment_stats = add_beta_interval_columns(
+                pd.DataFrame(
+                    [
+                        {
+                            "Successful": success,
+                            "Actions": actions if actions > 0 else np.nan,
+                        }
+                    ]
+                ),
+                successes_col="Successful",
+                trials_col="Actions",
+                prefix="% successful",
+            ).iloc[0]
+            row[(segment_name, "% successful 95% CI low")] = segment_stats[
+                "% successful 95% CI low"
+            ]
+            row[(segment_name, "% successful 95% CI high")] = segment_stats[
+                "% successful 95% CI high"
+            ]
         rows.append(row)
 
-    out = pd.DataFrame(rows, index=condition_order)
+    total_row = {}
+    for segment_name, rot in segments:
+        segment_df = df if rot is None else df[df["rotation"] == rot]
+        denominator = len(segment_df)
+        actions = int(denominator)
+        success = int(segment_df["success"].sum()) if actions else 0
+        share = actions / denominator if denominator > 0 else np.nan
+        success_rate = success / actions if actions > 0 else np.nan
+
+        total_row[(segment_name, "Actions")] = actions
+        total_row[(segment_name, "% share")] = share
+        total_row[(segment_name, "Successful")] = success
+        total_row[(segment_name, "% successful")] = success_rate
+
+        share_stats = add_beta_interval_columns(
+            pd.DataFrame(
+                [
+                    {
+                        "Actions": actions,
+                        "Denominator": denominator if denominator > 0 else np.nan,
+                    }
+                ]
+            ),
+            successes_col="Actions",
+            trials_col="Denominator",
+            prefix="% share",
+        ).iloc[0]
+        total_row[(segment_name, "% share 95% CI low")] = share_stats["% share 95% CI low"]
+        total_row[(segment_name, "% share 95% CI high")] = share_stats["% share 95% CI high"]
+
+        success_stats = add_beta_interval_columns(
+            pd.DataFrame(
+                [
+                    {
+                        "Successful": success,
+                        "Actions": actions if actions > 0 else np.nan,
+                    }
+                ]
+            ),
+            successes_col="Successful",
+            trials_col="Actions",
+            prefix="% successful",
+        ).iloc[0]
+        total_row[(segment_name, "% successful 95% CI low")] = success_stats[
+            "% successful 95% CI low"
+        ]
+        total_row[(segment_name, "% successful 95% CI high")] = success_stats[
+            "% successful 95% CI high"
+        ]
+
+    rows.append(total_row)
+    out = pd.DataFrame(rows, index=condition_order + ["Grand total"])
     out.index.name = "Condition"
     out.columns = pd.MultiIndex.from_tuples(out.columns)
     return out

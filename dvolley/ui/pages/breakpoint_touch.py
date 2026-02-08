@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from dvolley.domain.bayesian_stats import format_ci_range
 from dvolley.domain.breakpoint_touch_analysis import (
     BreakpointTouchResult,
     build_breakpoint_touch_analysis,
@@ -38,8 +39,25 @@ def _load_touch_data_cached() -> pd.DataFrame:
 
 def _format_percent_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    low_suffix = " 95% CI low"
+    high_suffix = " 95% CI high"
+    for col in list(out.columns):
+        col_name = str(col)
+        if not col_name.endswith(low_suffix):
+            continue
+        prefix = col_name[: -len(low_suffix)]
+        high_col = f"{prefix}{high_suffix}"
+        if high_col not in out.columns:
+            continue
+        ci_col = f"{prefix} CI"
+        out[ci_col] = [format_ci_range(lo, hi) for lo, hi in zip(out[col], out[high_col])]
+        out = out.drop(columns=[col, high_col])
+
     for col in out.columns:
-        if "%" in str(col):
+        col_name = str(col)
+        if col_name.endswith(" CI"):
+            continue
+        if "%" in col_name:
             out[col] = out[col].apply(
                 lambda x: f"{x:.2%}" if pd.notna(x) else "-"
             )
@@ -72,12 +90,7 @@ def _render_summary_tables(result: BreakpointTouchResult):
 
     with c2:
         st.markdown("### Break Points by Server")
-        player = result.player_summary.copy()
-        if not player.empty:
-            player["% break on serves"] = player["% break on serves"].apply(
-                lambda x: f"{x:.2%}" if pd.notna(x) else "-"
-            )
-        st.dataframe(player, use_container_width=True)
+        st.dataframe(_format_percent_cols(result.player_summary.copy()), use_container_width=True)
 
     with c3:
         st.markdown("### Class Summary")
@@ -96,9 +109,10 @@ def _render_class_tables(result: BreakpointTouchResult):
     for i, class_name in enumerate(class_names):
         with cols[i % 3]:
             st.markdown(f"**{class_name}**")
-            table = result.class_rotation_tables[class_name].copy()
-            table["%"] = table["%"].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "-")
-            st.dataframe(table, use_container_width=True)
+            st.dataframe(
+                _format_percent_cols(result.class_rotation_tables[class_name].copy()),
+                use_container_width=True,
+            )
 
 
 def render_breakpoint_analysis_from_touches(
@@ -116,6 +130,7 @@ def render_breakpoint_analysis_from_touches(
         "ACE: point won by the serving team with serve evaluation '#', or with no opponent touch "
         "and immediate rally end."
     )
+    st.caption("Probability columns include Bayesian 95% CI (Beta(1,1) prior).")
 
     if touches_df.empty:
         st.warning("No touch-by-touch data available in the database.")

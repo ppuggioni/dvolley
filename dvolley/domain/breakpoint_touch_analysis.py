@@ -6,6 +6,8 @@ from typing import Dict, Iterable, Optional
 import numpy as np
 import pandas as pd
 
+from dvolley.domain.bayesian_stats import add_beta_interval_columns
+
 
 RECEPTION_CODES = ["#", "+", "!", "-", "/"]
 BASE_CLASS_ORDER = [f"OPP RECEPTION {c}" for c in RECEPTION_CODES] + ["ACE", "ERRORS"]
@@ -381,12 +383,35 @@ def _build_rotation_summary(serve_rallies: pd.DataFrame) -> pd.DataFrame:
         ],
         index=["Total"],
     )
-    return pd.concat([out, total_row], axis=0)
+    out = pd.concat([out, total_row], axis=0)
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Break_points",
+        trials_col="Serves",
+        prefix="% break on serves",
+    )
+    out["_serves_excl_errors"] = out["Serves"] - out["Errors"]
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Break_points",
+        trials_col="_serves_excl_errors",
+        prefix="% break excl errors",
+    )
+    return out.drop(columns="_serves_excl_errors")
 
 
 def _build_player_summary(serve_rallies: pd.DataFrame) -> pd.DataFrame:
     if serve_rallies.empty:
-        return pd.DataFrame(columns=["player_name", "Serves", "Break_points", "% break on serves"])
+        return pd.DataFrame(
+            columns=[
+                "player_name",
+                "Serves",
+                "Break_points",
+                "% break on serves",
+                "% break on serves 95% CI low",
+                "% break on serves 95% CI high",
+            ]
+        )
 
     out = (
         serve_rallies.groupby("server_player_name", dropna=False)
@@ -398,6 +423,12 @@ def _build_player_summary(serve_rallies: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"server_player_name": "player_name"})
     )
     out["% break on serves"] = np.where(out["Serves"] > 0, out["Break_points"] / out["Serves"], np.nan)
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Break_points",
+        trials_col="Serves",
+        prefix="% break on serves",
+    )
     return out.sort_values(["Serves", "Break_points"], ascending=[False, False]).reset_index(drop=True)
 
 
@@ -438,6 +469,28 @@ def _build_class_summary(serve_rallies: pd.DataFrame, class_order: list[str]) ->
         index=["Total"],
     )
     out = pd.concat([totals, total_row], axis=0)
+    out["_total_serves_trials"] = float(total_serves) if total_serves > 0 else np.nan
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Total_serves",
+        trials_col="_total_serves_trials",
+        prefix="% of total serves",
+    )
+    out = out.drop(columns="_total_serves_trials")
+    out["_total_points_trials"] = float(total_points) if total_points > 0 else np.nan
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Points_scored",
+        trials_col="_total_points_trials",
+        prefix="% of total points",
+    )
+    out = out.drop(columns="_total_points_trials")
+    out = add_beta_interval_columns(
+        out,
+        successes_col="Points_scored",
+        trials_col="Total_serves",
+        prefix="% points on serves",
+    )
     out.index.name = "Class"
     return out
 
@@ -472,7 +525,14 @@ def _build_class_rotation_tables(
             ],
             index=["Total"],
         )
-        out[class_name] = pd.concat([base, total_row], axis=0)
+        table = pd.concat([base, total_row], axis=0)
+        table = add_beta_interval_columns(
+            table,
+            successes_col="Our_points",
+            trials_col="Receptions",
+            prefix="%",
+        )
+        out[class_name] = table
     return out
 
 
