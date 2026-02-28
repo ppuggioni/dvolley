@@ -202,6 +202,7 @@ def test_build_player_analysis_tables_returns_expected_breakdowns():
     result = build_player_analysis_tables(dataset, "Alice", include_by_rotation=True)
 
     assert result.first_attack_attempts == 2
+    assert result.total_attack_attempts == 6
     assert result.non_first_attack_attempts == 4
     assert result.pass_attempts == 2
 
@@ -223,6 +224,17 @@ def test_build_player_analysis_tables_returns_expected_breakdowns():
     assert by_pass["#"].loc["#", ("Total", "% rally won")] == pytest.approx(1.0)
     assert by_pass["+"].loc["!", ("Total", "% rally won")] == pytest.approx(1.0)
     assert ("Total", "% successful") not in by_pass["#"].columns
+
+    total_attack = result.total_attack_table
+    assert total_attack.loc["#", ("Total", "Actions")] == 3
+    assert total_attack.loc["!", ("Total", "Actions")] == 1
+    assert total_attack.loc["+", ("Total", "Actions")] == 1
+    assert total_attack.loc["/", ("Total", "Actions")] == 1
+    assert total_attack.loc["#", ("Total", "% rally won")] == pytest.approx(1.0)
+    assert total_attack.loc["!", ("Total", "% rally won")] == pytest.approx(1.0)
+    assert total_attack.loc["+", ("Total", "% rally won")] == pytest.approx(1.0)
+    assert total_attack.loc["/", ("Total", "% rally won")] == pytest.approx(0.0)
+    assert ("Total", "% successful") not in total_attack.columns
 
     non_first = result.non_first_attack_table
     assert non_first.loc["#", ("Total", "Actions")] == 2

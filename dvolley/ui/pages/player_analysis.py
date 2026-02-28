@@ -223,6 +223,7 @@ def page_player_analysis_main(loader):
     st.title("Player Analysis")
     st.info(
         "Sideout-only player analysis.\n"
+        "- Total attack quality by rotation (+ aggregates), using all attacks by the selected player.\n"
         "- First sideout attack quality by pass quality and rotation (+ aggregates).\n"
         "- Non-first attack quality by rotation (+ aggregates), using attacks from both sideout and breakpoint rallies.\n"
         "- First-pass quality by rotation (+ aggregates).\n"
@@ -344,13 +345,21 @@ def page_player_analysis_main(loader):
         include_by_rotation=include_by_rotation,
     )
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Sideout rallies", int(len(dataset.sideout_rallies)))
     c2.metric("Player first attacks", int(result.first_attack_attempts))
-    c3.metric("Player non-first attacks", int(result.non_first_attack_attempts))
-    c4.metric("Player first passes", int(result.pass_attempts))
+    c3.metric("Player total attacks", int(result.total_attack_attempts))
+    c4.metric("Player non-first attacks", int(result.non_first_attack_attempts))
+    c5.metric("Player first passes", int(result.pass_attempts))
 
-    st.markdown("### 1) First-Attack Quality in Sideout")
+    st.markdown("### 1) Total Attack Quality")
+    st.caption(
+        "Rows = attack quality for all attacks by the selected player (first + non-first, sideout + breakpoint). "
+        "Outcome columns report rallies won by the player's team."
+    )
+    _render_stats_table(result.total_attack_table, index_name="Attack quality")
+
+    st.markdown("### 2) First-Attack Quality in Sideout")
     st.caption(
         "Rows = first-attack quality for the selected player. "
         "Outcome columns report rallies won by the player's team."
@@ -361,14 +370,14 @@ def page_player_analysis_main(loader):
     st.caption("Each tab keeps the same metrics split by pass quality, with aggregate and rotation columns.")
     _render_first_attack_by_pass_tables(result)
 
-    st.markdown("### 2) Non-First Attack Quality")
+    st.markdown("### 3) Non-First Attack Quality")
     st.caption(
         "Rows = attack quality for attacks that are not the first attack after reception, from both sideout and breakpoint rallies. "
         "Outcome columns report rallies won by the player's team."
     )
     _render_stats_table(result.non_first_attack_table, index_name="Attack quality")
 
-    st.markdown("### 3) Pass Quality in Sideout")
+    st.markdown("### 4) Pass Quality in Sideout")
     st.caption(
         "Rows = first-pass quality for rallies where this player receives serve first. "
         "Outcome columns report rallies won by the player's team."

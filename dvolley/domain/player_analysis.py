@@ -25,9 +25,11 @@ class PlayerSideoutDataset:
 class PlayerAnalysisTables:
     first_attack_overall: pd.DataFrame
     first_attack_by_pass_quality: dict[str, pd.DataFrame]
+    total_attack_table: pd.DataFrame
     non_first_attack_table: pd.DataFrame
     pass_quality_table: pd.DataFrame
     first_attack_attempts: int
+    total_attack_attempts: int
     non_first_attack_attempts: int
     pass_attempts: int
 
@@ -318,6 +320,20 @@ def build_player_analysis_tables(
         if not table.empty:
             first_attack_by_pass_quality[pass_quality] = table
 
+    total_attack_rows = team_attacks[
+        (team_attacks["player_name"] == player_name)
+        & team_attacks["attack_quality"].notna()
+    ].copy()
+    total_attack_order = _ordered_codes(total_attack_rows["attack_quality"], ATTACK_QUALITY_ORDER)
+    total_attack_table = _build_condition_table(
+        total_attack_rows,
+        condition_col="attack_quality",
+        condition_order=total_attack_order,
+        success_col=None,
+        rally_win_col="rally_won",
+        include_by_rotation=include_by_rotation,
+    )
+
     non_first_attack_rows = team_attacks[
         (team_attacks["player_name"] == player_name)
         & (team_attacks["is_first_attack"] == 0)
@@ -350,9 +366,11 @@ def build_player_analysis_tables(
     return PlayerAnalysisTables(
         first_attack_overall=first_attack_overall,
         first_attack_by_pass_quality=first_attack_by_pass_quality,
+        total_attack_table=total_attack_table,
         non_first_attack_table=non_first_attack_table,
         pass_quality_table=pass_quality_table,
         first_attack_attempts=int(len(first_attack_rows)),
+        total_attack_attempts=int(len(total_attack_rows)),
         non_first_attack_attempts=int(len(non_first_attack_rows)),
         pass_attempts=int(len(pass_rows)),
     )
