@@ -12,13 +12,14 @@ See `ARCHITECTURE.md` for the full data and runtime flow.
 - Run touch-by-touch **Detailed Analysis** (Breakpoint/Sideout) with team-first filtering.
 - Run **Descriptive Statistics** for sideout/breakpoint event and attack-quality summaries.
 - Run **Player Analysis** for player-level sideout pass/attack quality breakdowns.
+- Run **Team - Player Comparison** for team-level player comparison by attack/pass quality.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `app.py` | Streamlit entrypoint and page routing. |
-| `dvolley/ui/pages/` | App pages: Setup, Detailed Analysis, Descriptive Statistics, Player Analysis, Conditional Breakpoint Probability, Rotation, Teams Summary, Model Analysis. |
+| `dvolley/ui/pages/` | App pages: Setup, Detailed Analysis, Descriptive Statistics, Player Analysis, Team - Player Comparison, Conditional Breakpoint Probability, Rotation, Teams Summary, Model Analysis. |
 | `dvolley/domain/` | Core logic: modeling, simulation, breakpoint/sideout touch analysis. |
 | `dvolley/services/` | DB/GDrive integration and data-loading orchestration. |
 | `dvolley/data/` | DVW parsers and date normalization helpers. |
@@ -52,6 +53,7 @@ Configure credentials in `st.secrets` for:
    - **Detailed Analysis** for touch-by-touch breakpoint/sideout tables.
    - **Descriptive Statistics** for event-level and attack-quality point-won summaries.
    - **Player Analysis** for sideout player pass/attack-quality splits by rotation.
+   - **Team - Player Comparison** for player rows vs quality columns with efficiency and rally-win rates.
    - **Rotation Simulator** for 6x6 win-probability grids.
    - **Teams Summary** and **Model Analysis** for fitted-parameter diagnostics.
 
