@@ -13,6 +13,8 @@ def _make_rally_rows(
     point_won_by: str,
     home_setter: int,
     away_setter: int,
+    serve_eval: str = "+",
+    serve_player: str = "Server",
     actions: list[dict[str, str | None]],
     start_unique_id: int,
 ) -> list[dict[str, object]]:
@@ -31,10 +33,10 @@ def _make_rally_rows(
             "point_won_by": point_won_by,
             "skill": "Serve",
             "team": serving_team,
-            "evaluation_code": "+",
+            "evaluation_code": serve_eval,
             "home_setter_position": home_setter,
             "visiting_setter_position": away_setter,
-            "player_name": "Server",
+            "player_name": serve_player,
         }
     ]
 
@@ -151,6 +153,8 @@ def _make_touch_df() -> pd.DataFrame:
         point_won_by="A",
         home_setter=4,
         away_setter=2,
+        serve_eval="#",
+        serve_player="ServerA",
         actions=[
             {"skill": "Reception", "team": "B", "eval": "+", "player": "OppR"},
             {"skill": "Attack", "team": "A", "eval": "#", "player": "Alice"},
@@ -164,11 +168,25 @@ def _make_touch_df() -> pd.DataFrame:
         point_won_by="A",
         home_setter=5,
         away_setter=3,
+        serve_eval="+",
+        serve_player="ServerB",
         actions=[
             {"skill": "Reception", "team": "B", "eval": "!", "player": "OppR2"},
             {"skill": "Attack", "team": "A", "eval": "+", "player": "Alice"},
         ],
         start_unique_id=100,
+    )
+    rows += _make_rally_rows(
+        match_id="m1",
+        rally_number=7,
+        serving_team="A",
+        point_won_by="B",
+        home_setter=6,
+        away_setter=4,
+        serve_eval="=",
+        serve_player="ServerB",
+        actions=[],
+        start_unique_id=120,
     )
     return pd.DataFrame(rows)
 
@@ -231,3 +249,23 @@ def test_pass_quality_table_has_player_rows_and_total():
     assert table.loc["Receiver2", ("Efficiency", "Score")] == pytest.approx(-1.0)
     assert table.loc["TOTAL", ("#", "% rally won")] == pytest.approx(1.0)
     assert table.loc["TOTAL", ("/", "% rally won")] == pytest.approx(0.0)
+
+
+def test_serve_quality_table_has_players_total_and_efficiency():
+    dataset = build_player_sideout_dataset(_make_touch_df(), team_id="1")
+    result = build_team_player_comparison(dataset)
+
+    table = result.serve_quality_table
+    assert "TOTAL" in table.index
+    assert table.loc["ServerA", ("#", "Count")] == 1
+    assert table.loc["ServerA", ("#", "% rally won")] == pytest.approx(1.0)
+    assert table.loc["ServerA", ("Efficiency", "Score")] == pytest.approx(1.0)
+    assert table.loc["ServerB", ("+", "Count")] == 1
+    assert table.loc["ServerB", ("=", "Count")] == 1
+    assert table.loc["ServerB", ("+", "% rally won")] == pytest.approx(1.0)
+    assert table.loc["ServerB", ("=", "% rally won")] == pytest.approx(0.0)
+    assert table.loc["ServerB", ("Efficiency", "Score")] == pytest.approx(0.0)
+    assert table.loc["TOTAL", ("#", "Count")] == 1
+    assert table.loc["TOTAL", ("+", "Count")] == 1
+    assert table.loc["TOTAL", ("=", "Count")] == 1
+    assert table.loc["TOTAL", ("Efficiency", "Score")] == pytest.approx(1.0 / 3.0)

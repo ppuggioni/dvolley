@@ -11,12 +11,14 @@ from dvolley.domain.bayesian_stats import add_beta_interval_columns
 
 PASS_QUALITY_ORDER = ["#", "+", "!", "-", "/", "OTHER"]
 ATTACK_QUALITY_ORDER = ["#", "+", "!", "-", "/", "=", "OTHER"]
+SERVE_QUALITY_ORDER = ["#", "+", "!", "-", "/", "=", "OTHER"]
 
 
 @dataclass
 class PlayerSideoutDataset:
     sideout_rallies: pd.DataFrame
     team_attacks: pd.DataFrame
+    team_serves: pd.DataFrame
     players: list[str]
     diagnostics: dict[str, int]
 
@@ -46,6 +48,7 @@ def build_player_sideout_dataset(
         "sideout_rallies": 0,
         "counted_rallies": 0,
         "attack_rows": 0,
+        "serve_rows": 0,
         "first_pass_rows": 0,
         "first_attack_rows": 0,
         "skipped_no_serve_row": 0,
@@ -56,6 +59,7 @@ def build_player_sideout_dataset(
         return PlayerSideoutDataset(
             sideout_rallies=pd.DataFrame(),
             team_attacks=pd.DataFrame(),
+            team_serves=pd.DataFrame(),
             players=[],
             diagnostics=diagnostics,
         )
@@ -75,6 +79,7 @@ def build_player_sideout_dataset(
         return PlayerSideoutDataset(
             sideout_rallies=pd.DataFrame(),
             team_attacks=pd.DataFrame(),
+            team_serves=pd.DataFrame(),
             players=[],
             diagnostics=diagnostics,
         )
@@ -87,6 +92,7 @@ def build_player_sideout_dataset(
         return PlayerSideoutDataset(
             sideout_rallies=pd.DataFrame(),
             team_attacks=pd.DataFrame(),
+            team_serves=pd.DataFrame(),
             players=[],
             diagnostics=diagnostics,
         )
@@ -101,6 +107,7 @@ def build_player_sideout_dataset(
     diagnostics["candidate_rallies"] = int(df[group_cols].drop_duplicates().shape[0])
     rally_rows: list[dict[str, object]] = []
     attack_rows: list[dict[str, object]] = []
+    team_serve_rows: list[dict[str, object]] = []
 
     for (match_id, set_number, rally_number), g in df.groupby(group_cols, dropna=False, sort=False):
         first = g.iloc[0]
@@ -217,9 +224,31 @@ def build_player_sideout_dataset(
                     "first_pass_quality": first_pass_quality,
                 }
             )
+        selected_team_serve_rows = g_reset[
+            (g_reset["skill"] == "Serve") & (g_reset["team"] == selected_team_name)
+        ]
+        for _, selected_serve_row in selected_team_serve_rows.iterrows():
+            serve_quality = _normalize_eval_code(
+                selected_serve_row.get("evaluation_code"),
+                SERVE_QUALITY_ORDER,
+            )
+            team_serve_rows.append(
+                {
+                    "rally_id": f"{match_id}|{int(set_number)}|{int(rally_number)}",
+                    "match_alternative_id": match_id,
+                    "set_number": int(set_number),
+                    "rally_number": int(rally_number),
+                    "rotation": selected_rotation,
+                    "phase": phase,
+                    "rally_won": rally_won,
+                    "player_name": _normalize_player_name(selected_serve_row.get("player_name")),
+                    "serve_quality": serve_quality,
+                }
+            )
 
     sideout_rallies = pd.DataFrame(rally_rows)
     team_attacks = pd.DataFrame(attack_rows)
+    team_serves = pd.DataFrame(team_serve_rows)
 
     if sideout_rallies.empty:
         players = (
@@ -228,9 +257,11 @@ def build_player_sideout_dataset(
             else []
         )
         diagnostics["attack_rows"] = int(len(team_attacks))
+        diagnostics["serve_rows"] = int(len(team_serves))
         return PlayerSideoutDataset(
             sideout_rallies=sideout_rallies,
             team_attacks=team_attacks,
+            team_serves=team_serves,
             players=players,
             diagnostics=diagnostics,
         )
@@ -259,6 +290,14 @@ def build_player_sideout_dataset(
             pd.to_numeric(team_attacks["is_first_attack"], errors="coerce").fillna(0).astype(int)
         )
         team_attacks = team_attacks.reset_index(drop=True)
+    if not team_serves.empty:
+        team_serves["rotation"] = pd.to_numeric(team_serves["rotation"], errors="coerce")
+        team_serves = team_serves[team_serves["rotation"].between(1, 6, inclusive="both")]
+        team_serves["rotation"] = team_serves["rotation"].astype(int)
+        team_serves["rally_won"] = (
+            pd.to_numeric(team_serves["rally_won"], errors="coerce").fillna(0).astype(int)
+        )
+        team_serves = team_serves.reset_index(drop=True)
 
     players = sorted(
         {
@@ -270,12 +309,14 @@ def build_player_sideout_dataset(
 
     diagnostics["counted_rallies"] = int(len(sideout_rallies))
     diagnostics["attack_rows"] = int(len(team_attacks))
+    diagnostics["serve_rows"] = int(len(team_serves))
     diagnostics["first_pass_rows"] = int(sideout_rallies["first_pass_player"].notna().sum())
     diagnostics["first_attack_rows"] = int(sideout_rallies["first_attack_player"].notna().sum())
 
     return PlayerSideoutDataset(
         sideout_rallies=sideout_rallies,
         team_attacks=team_attacks,
+        team_serves=team_serves,
         players=players,
         diagnostics=diagnostics,
     )
