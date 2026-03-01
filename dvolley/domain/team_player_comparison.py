@@ -8,6 +8,7 @@ import pandas as pd
 from dvolley.domain.player_analysis import (
     ATTACK_QUALITY_ORDER,
     PASS_QUALITY_ORDER,
+    SERVE_QUALITY_ORDER,
     PlayerSideoutDataset,
 )
 
@@ -17,6 +18,7 @@ class TeamPlayerComparisonResult:
     total_attack_table: pd.DataFrame
     first_attack_by_pass_quality: dict[str, pd.DataFrame]
     pass_quality_table: pd.DataFrame
+    serve_quality_table: pd.DataFrame
 
 
 def build_team_player_comparison(
@@ -61,11 +63,22 @@ def build_team_player_comparison(
         outcome_col="sideout_point",
         quality_order=PASS_QUALITY_ORDER,
     )
+    serve_rows = dataset.team_serves[
+        dataset.team_serves["serve_quality"].notna()
+    ].copy()
+    serve_quality_table = _build_player_quality_table(
+        serve_rows,
+        player_col="player_name",
+        quality_col="serve_quality",
+        outcome_col="rally_won",
+        quality_order=SERVE_QUALITY_ORDER,
+    )
 
     return TeamPlayerComparisonResult(
         total_attack_table=total_attack_table,
         first_attack_by_pass_quality=first_attack_by_pass_quality,
         pass_quality_table=pass_quality_table,
+        serve_quality_table=serve_quality_table,
     )
 
 
@@ -104,17 +117,17 @@ def _build_player_quality_table(
     rows: list[dict[tuple[str, str], float | int]] = []
     index_labels: list[str] = []
 
+    total_row = _build_row(work, quality_col=quality_col, outcome_col=outcome_col, ordered_qualities=ordered_qualities)
+    rows.append(total_row)
+    index_labels.append("TOTAL")
+
     for player_name in player_order:
         player_df = work[work[player_col] == player_name].copy()
         row = _build_row(player_df, quality_col=quality_col, outcome_col=outcome_col, ordered_qualities=ordered_qualities)
         rows.append(row)
         index_labels.append(str(player_name))
 
-    total_row = _build_row(work, quality_col=quality_col, outcome_col=outcome_col, ordered_qualities=ordered_qualities)
-    rows.append(total_row)
-    index_labels.append("TOTAL")
-
-    columns: list[tuple[str, str]] = [("Efficiency", "Score")]
+    columns: list[tuple[str, str]] = [("Total", "Count"), ("Efficiency", "Score")]
     for quality in ordered_qualities:
         columns.extend(
             [
@@ -156,6 +169,7 @@ def _build_row(
             mapped = 2.0 * rally_win_prob - 1.0
             efficiency += share * mapped
 
+    row[("Total", "Count")] = total
     row[("Efficiency", "Score")] = efficiency if total > 0 else np.nan
     return row
 

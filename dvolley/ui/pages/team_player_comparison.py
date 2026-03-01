@@ -170,6 +170,8 @@ def page_team_player_comparison_main(loader):
         "2) First attack by pass quality: one table per pass quality, same structure.\n"
         "3) Pass quality: rows are players (+ TOTAL); columns are pass-quality Count, % share, % rally won, "
         "plus Efficiency.\n"
+        "4) Serve quality: rows are players (+ TOTAL); columns are serve-quality Count, % share, % rally won, "
+        "plus Efficiency.\n"
         "Efficiency = sum(share * (2 * rally_win_probability - 1))."
     )
 
@@ -259,14 +261,17 @@ def page_team_player_comparison_main(loader):
         )
         result = build_team_player_comparison(dataset)
 
-    if dataset.team_attacks.empty:
-        st.warning("No attacks found for the selected team and matches.")
+    if dataset.team_attacks.empty and dataset.sideout_rallies.empty and dataset.team_serves.empty:
+        st.warning("No attack/pass/serve rows found for the selected team and matches.")
         return
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Team attacks", int(len(dataset.team_attacks)))
     c2.metric("Team sideout rallies", int(len(dataset.sideout_rallies)))
-    c3.metric("Players", int(len(set(dataset.team_attacks["player_name"].dropna().astype(str).tolist()))))
+    c3.metric("Team serves", int(len(dataset.team_serves)))
+    player_names = set(dataset.team_attacks["player_name"].dropna().astype(str).tolist())
+    player_names.update(dataset.team_serves["player_name"].dropna().astype(str).tolist())
+    c4.metric("Players", int(len(player_names)))
 
     st.markdown("### 1) Total Attacks")
     _display_comparison_table(result.total_attack_table)
@@ -276,6 +281,9 @@ def page_team_player_comparison_main(loader):
 
     st.markdown("### 3) Pass Quality")
     _display_comparison_table(result.pass_quality_table)
+
+    st.markdown("### 4) Serve Quality")
+    _display_comparison_table(result.serve_quality_table)
 
     with st.expander("Diagnostics", expanded=False):
         st.write(dataset.diagnostics)
